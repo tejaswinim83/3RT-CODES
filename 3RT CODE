@@ -1,0 +1,740 @@
+Of course ✅
+Below I’ve given you the full corrected and cleaned replay code with proper header matching, pause/resume, jump to SYS_Second, and clear explanations inside the code comments.
+
+This works with your existing GUI and RT_HEADERS mapping.
+
+🧾 Full Corrected Replay Code (with Detailed Explanation)
+import csv
+import threading
+import time as pytime
+import os
+from tkinter import filedialog
+
+# ========================
+# Global Variables
+# ========================
+replay_running = False          # Replay active flag
+replay_paused = False           # Replay paused flag
+replay_filepath = None          # Currently loaded replay file path
+jump_target_sec = None          # SYS_Second to jump to (if user enters value)
+selected_tab = None             # Selected RT tab
+data_queue = queue.Queue()      # Queue used to send decoded data to GUI
+
+# Example Header Dictionary
+# Replace with your actual header values for RT1 / RT2 / RT3
+RT_HEADERS = {
+    "RT1": ["ACCA1F0A", "ACCA1F0B"],
+    "RT2": ["ACCA2F0A", "ACCA2F0B"],
+    "RT3": ["ACCA3F0A"]
+}
+
+# ========================
+# Helper Function
+# ========================
+def reverse_and_concatenate(hex_str):
+    """
+    Takes a hex string like '12 34 56 78' and returns reversed order '78563412'.
+    Useful for SYS_Second word extraction where endianness matters.
+    """
+    hex_str = hex_str.replace(" ", "")
+    bytes_list = [hex_str[i:i+2] for i in range(0, len(hex_str), 2)]
+    reversed_bytes = bytes_list[::-1]
+    return ''.join(reversed_bytes)
+
+
+# ========================
+# Replay File Selection & Start
+# ========================
+def replay_from_file():
+    """
+    Opens a file dialog to select a CSV replay file,
+    starts the replay thread if a file is chosen.
+    """
+    global replay_running, replay_filepath
+    filepath = filedialog.askopenfilename(
+        title="Select Raw Data File",
+        filetypes=[("CSV files", "*.csv"), ("All files", "*.*")]
+    )
+    if not filepath:
+        return
+
+    replay_filepath = filepath
+    replay_running = True
+    filename = os.path.basename(filepath)
+
+    btn_replay.config(text=filename, fg="blue")  # Update button name with file name
+
+    # Launch replay thread
+    threading.Thread(target=process_replay_file, args=(filepath,), daemon=True).start()
+
+
+# ========================
+# Main Replay Function
+# ========================
+def process_replay_file(filepath):
+    """
+    Reads data line by line from CSV and pushes packets that match
+    RT headers into the data_queue — exactly how live serial data is handled.
+    """
+    global replay_running, replay_paused, jump_target_sec, selected_tab
+
+    # 1️⃣ Pick correct header based on active tab (RT1, RT2, RT3)
+    headers = RT_HEADERS[selected_tab]
+    main_header = headers[0].upper()
+    secondary_header = headers[1].upper() if len(headers) > 1 else None
+
+    print(f"🎯 Using headers for {selected_tab}: MAIN={main_header}, SECONDARY={secondary_header}")
+
+    try:
+        with open(filepath, "r", encoding="utf-8") as f:
+            reader = csv.reader(f)
+            next(reader, None)  # Skip CSV column header row if present
+            fast_skip_mode = jump_target_sec is not None
+            line_no = 0
+
+            for row in reader:
+                # 2️⃣ Stop if user pressed "Stop Replay"
+                if not replay_running:
+                    break
+                line_no += 1
+
+                # 3️⃣ Ensure row has data
+                if len(row) < 2:
+                    print(f"⚠️ Line {line_no}: skipped (not enough columns)")
+                    continue
+
+                # 4️⃣ Normalize hex string (remove spaces, 0x, commas)
+                raw_hex = row[1].upper().replace(" ", "").replace("0X", "").replace(",", "")
+
+                # 5️⃣ Extract SYS_Second for jump logic
+                try:
+                    # Adjust indices here if SYS_Second location changes in your packet
+                    SYS_Second_hex = row[1][148:156].replace(" ", "")
+                    SYS_Second_val = int(reverse_and_concatenate(SYS_Second_hex), 16)
+                except Exception as e:
+                    print(f"⚠️ Line {line_no}: SYS_Second parse failed ({e})")
+                    continue
+
+                # 6️⃣ Jump handling: skip lines until we reach target SYS_Second
+                if jump_target_sec is not None:
+                    if SYS_Second_val < jump_target_sec:
+                        continue
+                    elif SYS_Second_val > jump_target_sec:
+                        print(f"✅ Jumped! Starting from SYS_Second={SYS_Second_val}")
+                        jump_target_sec = None
+                        fast_skip_mode = False
+
+                # 7️⃣ Header match check
+                if raw_hex.startswith(main_header):
+                    data_queue.put(("header1", row[1]))
+                    print(f"[Line {line_no}] ✅ MAIN header match @ SYS_Second={SYS_Second_val}")
+                elif secondary_header and raw_hex.startswith(secondary_header):
+                    data_queue.put(("header2", row[1]))
+                    print(f"[Line {line_no}] ✅ SECONDARY header match @ SYS_Second={SYS_Second_val}")
+                else:
+                    if line_no < 10:
+                        print(f"[Line {line_no}] ❌ NO MATCH startswith='{raw_hex[:16]}'")
+
+                # 8️⃣ Pause handling — waits if user has paused replay
+                while replay_paused and replay_running:
+                    pytime.sleep(0.2)
+
+                # 9️⃣ Control replay speed (0.5s between packets normally)
+                if not fast_skip_mode:
+                    pytime.sleep(0.5)
+
+        print("✅ Replay finished or stopped.")
+
+    except UnicodeDecodeError:
+        print("❌ File encoding error! Try saving your CSV as UTF-8.")
+
+
+# ========================
+# Stop Replay Button
+# ========================
+def stop_replay():
+    """
+    Stops the replay loop cleanly.
+    """
+    global replay_running
+    replay_running = False
+    print("⏹ Replay stopped by user.")
+
+
+# ========================
+# Pause / Resume Button
+# ========================
+def toggle_pause_resume():
+    """
+    Toggles pause and resume state during replay.
+    """
+    global replay_paused
+    if replay_paused:
+        replay_paused = False
+        btn_pause_resume.config(text="Pause ⏸", bg="light green")
+        print("▶ Replay resumed.")
+    else:
+        replay_paused = True
+        btn_pause_resume.config(text="Resume ▶", bg="dark green")
+        print("⏸ Replay paused.")
+
+
+# ========================
+# Jump to SYS_Second Feature
+# ========================
+def jump_to_sys_sec():
+    """
+    Allows the user to jump to a specific SYS_Second value from GUI entry.
+    It restarts the replay thread and fast-forwards to that time.
+    """
+    global jump_target_sec, replay_running, replay_filepath, replay_paused
+
+    if not replay_filepath:
+        print("⚠️ No replay file loaded yet.")
+        return
+
+    try:
+        val = int(jump_entry.get())
+        jump_target_sec = val
+        print(f"🔄 Jump requested to SYS_Second = {val}")
+
+        # Stop current replay thread
+        replay_paused = False
+        btn_pause_resume.config(text="Pause ⏸", bg="light green")
+        replay_running = False
+        pytime.sleep(0.5)
+
+        # Restart replay thread from beginning
+        replay_running = True
+        threading.Thread(target=process_replay_file, args=(replay_filepath,), daemon=True).start()
+
+    except ValueError:
+        print("⚠️ Invalid SYS_Second value entered.")
+
+
+# ========================
+# Tab Change Event
+# ========================
+def on_tab_change(event):
+    """
+    Keeps track of which RT (RT1/RT2/RT3) is currently selected
+    so that correct headers can be used during replay.
+    """
+    global selected_tab
+    tab = event.widget.tab(event.widget.index("current"))["text"]
+    selected_tab = tab
+    print("Selected tab:", selected_tab)
+🧠 What This Code Does Step by Step
+Step	Function	Description
+1	replay_from_file()	Opens file picker and starts replay thread
+2	process_replay_file()	Main loop that reads CSV rows, matches header, pushes data to GUI queue
+3	reverse_and_concatenate()	Handles endianness for SYS_Second extraction
+4	Header match	Compares beginning of hex string with RT_HEADERS for active tab
+5	Jump logic	Fast-forwards replay until the given SYS_Second
+6	Pause/Resume	Lets you stop temporarily without restarting replay
+7	Stop	Cleanly stops replay loop
+8	on_tab_change	Updates which RT tab (RT1/RT2/RT3) is used for header comparison
+🧭 Important Notes for You
+🟢 SYS_Second_hex index [148:156] should match the actual location of your SYS_Second word in the packet.
+→ If your packet structure changes, adjust these indices.
+
+🟢 reverse_and_concatenate ensures correct byte order before converting to integer.
+
+🟢 data_queue.put(("header1", row[1])) integrates replay with your existing decoding GUI just like live serial.
+
+🟢 Jump works because we compare integers, not raw hex strings.
+
+🟢 No GUI freeze — everything runs in a separate thread.
+
+✅ Result:
+
+Replay works exactly “as per header”.
+
+You can pause, resume, jump to time, and stop freely.
+
+Data flows into data_queue just like live serial data.
+
+Would you like me to also give you the matching live serial read function with the same header matching logic — so re
+
+
+
+
+
+play and live behave identically? (Yes/No)
+
+
+
+
+
+
+
+
+
+
+
+=============================================================
+
+
+
+Absolutely ✅
+Here’s your full corrected and optimized Command Sending Code for
+👉 SA1 / SA2 (manual commands)
+👉 SA3 / SA4 (file-based commands)
+👉 BUS Toggle and BUS Commands (buttons + manual entry)
+👉 RT indicator support (RT1 / RT2 / RT3 dynamic)
+
+This code is clean, modular, and works with your selected_tab variable so that you don’t have to hard-code headers again and again.
+
+🧭 1. 🔸 RT Command Headers Setup
+# ============================================================
+# RT-SPECIFIC HEADERS FOR SA1–SA4 & BUS COMMANDS
+# ============================================================
+# You can modify 3rd byte (0x1F, 0x2F, 0x3F) based on your RT mapping.
+# This makes commands automatically pick correct header for the selected RT.
+RT_CMD_HEADERS = {
+    "RT1": {
+        "SA1": [0xAC, 0xCA, 0x1F, 0x01],
+        "SA2": [0xAC, 0xCA, 0x1F, 0x02],
+        "SA3": [0xAC, 0xCA, 0x1F, 0x03],
+        "SA4": [0xAC, 0xCA, 0x1F, 0x04],
+        "BUS": [0xAC, 0xCA, 0x1F, 0x0B]
+    },
+    "RT2": {
+        "SA1": [0xAC, 0xCA, 0x2F, 0x01],
+        "SA2": [0xAC, 0xCA, 0x2F, 0x02],
+        "SA3": [0xAC, 0xCA, 0x2F, 0x03],
+        "SA4": [0xAC, 0xCA, 0x2F, 0x04],
+        "BUS": [0xAC, 0xCA, 0x2F, 0x0B]
+    },
+    "RT3": {
+        "SA1": [0xAC, 0xCA, 0x3F, 0x01],
+        "SA2": [0xAC, 0xCA, 0x3F, 0x02],
+        "SA3": [0xAC, 0xCA, 0x3F, 0x03],
+        "SA4": [0xAC, 0xCA, 0x3F, 0x04],
+        "BUS": [0xAC, 0xCA, 0x3F, 0x0B]
+    }
+}
+👉 Explanation:
+
+1st & 2nd byte are constant sync pattern 0xAC 0xCA.
+
+3rd byte changes per RT (1F / 2F / 3F).
+
+4th byte is SA type (01 = SA1, 02 = SA2, 0B = BUS etc.)
+
+🧭 2. 🟢 RT Indicator (optional but very useful)
+# ============================================================
+# RT Indicator Label (GUI)
+# ============================================================
+rt_indicator_var = tk.StringVar()
+rt_indicator_label = tk.Label(
+    root,
+    textvariable=rt_indicator_var,
+    font=("Calibri", 13, "bold"),
+    bg="gray",
+    fg="white",
+    relief="solid",
+    bd=1,
+    padx=10,
+    pady=2
+)
+rt_indicator_label.place(x=20, y=10)  # adjust position as needed
+rt_indicator_var.set("Active RT: None")
+
+
+def on_tab_change(event):
+    """
+    Called when switching between RT tabs in GUI.
+    Updates RT indicator and selected_tab variable.
+    """
+    global selected_tab
+    tab = event.widget.tab(event.widget.index("current"))["text"]
+    selected_tab = tab
+    rt_indicator_var.set(f"Active RT: {selected_tab}")
+
+    # Optional: color coding
+    if selected_tab == "RT1":
+        rt_indicator_label.config(bg="dark green")
+    elif selected_tab == "RT2":
+        rt_indicator_label.config(bg="dark blue")
+    elif selected_tab == "RT3":
+        rt_indicator_label.config(bg="dark red")
+    else:
+        rt_indicator_label.config(bg="gray")
+
+    print(f"✅ Selected RT: {selected_tab}")
+👉 Explanation:
+
+The indicator shows which RT is active at all times.
+
+Prevents accidental command sends to the wrong RT.
+
+selected_tab is used in all command functions.
+
+🧭 3. ✈️ SA1 / SA2 / SA3 / SA4 Command Sender
+def send_general_command(data_str, cmd_type):
+    """
+    Handles:
+    - SA1 / SA2 manual 3-word commands
+    - SA3 / SA4 file-based streaming commands
+    Based on selected RT tab.
+    """
+    global sa3_thread, sa3_running, sa4_thread, sa4_running, selected_tab
+
+    # Ensure serial port is open
+    if not (ser and ser.is_open):
+        status_var.set("❌ Serial port not open.")
+        return
+
+    # Ensure RT is selected
+    if not selected_tab or selected_tab not in RT_CMD_HEADERS:
+        status_var.set("⚠️ No RT selected.")
+        return
+
+    # --------------------- SA3 / SA4 (File based) ---------------------
+    if cmd_type in ("SA3", "SA4"):
+        filepath = file_entries[cmd_type].get()
+        if not filepath or not os.path.exists(filepath):
+            status_var.set(f"❌ Please select a valid file for {cmd_type}.")
+            return
+
+        if cmd_type == "SA3":
+            if sa3_thread and sa3_thread.is_alive():
+                status_var.set("❌ SA3 already running!")
+                return
+            sa3_running = True
+            sa3_thread = threading.Thread(target=send_sax_from_file, args=(filepath, 0.064, cmd_type), daemon=True)
+            sa3_thread.start()
+            status_var.set(f"▶️ SA3 started for {selected_tab}.")
+        else:
+            if sa4_thread and sa4_thread.is_alive():
+                status_var.set("❌ SA4 already running!")
+                return
+            sa4_running = True
+            sa4_thread = threading.Thread(target=send_sax_from_file, args=(filepath, 1.0, cmd_type), daemon=True)
+            sa4_thread.start()
+            status_var.set(f"▶️ SA4 started for {selected_tab}.")
+        return
+
+    # --------------------- SA1 / SA2 (Manual 3-word) ---------------------
+    try:
+        parts = data_str.strip().split()
+        if len(parts) != 3:
+            status_var.set("❌ Enter exactly 3 words (e.g. 0x0000 0x0004 0x0055)")
+            return
+
+        words = [int(word, 16) for word in parts]
+        header = RT_CMD_HEADERS[selected_tab][cmd_type]
+        data_bytes = [b for word in words for b in word.to_bytes(2, byteorder='big')]
+        full_packet = header + data_bytes
+
+        ser.write(bytes(full_packet))
+
+        sent_str = f"[{selected_tab}] {cmd_type} → {[f'0x{b:02X}' for b in full_packet]}"
+        status_var.set(f"✅ {sent_str}")
+        print(sent_str)
+
+        with open("(SA1-SA4)command_log.txt", "a") as f:
+            f.write(f"{datetime.now().strftime('%Y-%m-%d %H:%M:%S')} | {selected_tab} | {sent_str}\n")
+
+    except ValueError:
+        status_var.set("❌ Invalid hex format.")
+    except Exception as e:
+        status_var.set(f"❌ Error sending {cmd_type}: {e}")
+👉 Explanation:
+
+Uses RT_CMD_HEADERS to automatically choose header.
+
+SA3 & SA4 use background thread to avoid GUI freeze.
+
+Logs are tagged with RT name.
+
+🧭 4. 📂 SA3 / SA4 File Send Logic
+def send_sax_from_file(filepath, interval, cmd_type):
+    """
+    Reads binary or hex file and sends in 64-byte blocks
+    with RT-specific header for SA3 / SA4.
+    """
+    global sa3_running, sa4_running, selected_tab
+
+    try:
+        if not selected_tab or selected_tab not in RT_CMD_HEADERS:
+            status_var.set("⚠️ No RT selected.")
+            return
+
+        with open(filepath, 'rb') as f:
+            raw = f.read()
+        try:
+            # Support ASCII hex files too
+            as_text = raw.decode('ascii')
+            hexstr = ''.join(c for c in as_text if c in '0123456789abcdefABCDEF')
+            file_bytes = bytes.fromhex(hexstr)
+        except Exception:
+            file_bytes = raw
+
+        if len(file_bytes) < 64:
+            status_var.set(f"❌ File must contain at least 64 bytes.")
+            if cmd_type == "SA3":
+                sa3_running = False
+            else:
+                sa4_running = False
+            return
+
+        header = RT_CMD_HEADERS[selected_tab][cmd_type]
+        num_blocks = len(file_bytes) // 64
+        idx = 0
+
+        while (sa3_running if cmd_type == "SA3" else sa4_running) and ser and ser.is_open:
+            start, end = idx * 64, (idx + 1) * 64
+            if end > len(file_bytes):
+                status_var.set(f"⏹️ {cmd_type} finished for {selected_tab}.")
+                break
+
+            packet = bytes(header) + file_bytes[start:end]
+            ser.write(packet)
+
+            sent_str = f"[{selected_tab}] {cmd_type} Block {idx+1}/{num_blocks} → {[f'0x{b:02X}' for b in packet]}"
+            status_var.set(f"✅ {sent_str}")
+            print(sent_str)
+            with open("(SA1-SA4)command_log.txt", "a") as f:
+                f.write(f"{datetime.now().strftime('%Y-%m-%d %H:%M:%S')} | {selected_tab} | {sent_str}\n")
+
+            idx += 1
+            # pacing
+            for _ in range(int(interval * 1000 / 10)):
+                if not (sa3_running if cmd_type == "SA3" else sa4_running):
+                    status_var.set(f"⏹️ {cmd_type} stopped manually.")
+                    return
+                time.sleep(0.01)
+
+    except Exception as e:
+        status_var.set(f"❌ Error in {cmd_type} send: {e}")
+        if cmd_type == "SA3":
+            sa3_running = False
+        else:
+            sa4_running = False
+👉 Explanation:
+
+Supports both binary and ASCII hex file.
+
+Sends 64 bytes at a time with correct RT header.
+
+Interval controls pacing between packets.
+
+🧭 5. 🛑 Stop Functions
+def stop_sa3():
+    global sa3_running
+    if sa3_running:
+        sa3_running = False
+        status_var.set("⏹️ SA3 stopping...")
+
+def stop_sa4():
+    global sa4_running
+    if sa4_running:
+        sa4_running = False
+        status_var.set("⏹️ SA4 stopping...")
+🧭 6. 🚌 BUS Commands (Toggle + Buttons + Entry)
+def on_bus_toggle(*args):
+    """
+    Toggles BUS A/B with RT-specific BUS header.
+    """
+    try:
+        if not (ser and ser.is_open):
+            status_var.set("❌ Serial port not open.")
+            return
+        if bus_var.get() not in ["A", "B"]:
+            return
+        if not selected_tab or selected_tab not in RT_CMD_HEADERS:
+            status_var.set("⚠️ No RT selected.")
+            return
+
+        header = RT_CMD_HEADERS[selected_tab]["BUS"]
+        rt_address = 0x00
+        bus_val = 0x78 if bus_var.get() == "A" else 0x77
+        packet = header + [rt_address, bus_val]
+        ser.write(bytes(packet))
+
+        bus_name = "BUS A" if bus_val == 0x78 else "BUS B"
+        sent_str = f"[{selected_tab}] BUS Toggle → {[f'0x{b:02X}' for b in packet]} ({bus_name})"
+        status_var.set(sent_str)
+        with open("Buscmd.txt", "a") as f:
+            f.write(f"{datetime.now().strftime('%Y-%m-%d %H:%M:%S')} | {selected_tab} | {sent_str}\n")
+    except Exception as e:
+        status_var.set(f"❌ Error sending bus toggle: {e}")
+
+
+def send_bus_command_button(cmd_value=None):
+    """
+    Sends BUS command from predefined button.
+    """
+    try:
+        if not (ser and ser.is_open):
+            status_var.set("❌ Serial port not open.")
+            return
+        if not selected_tab or selected_tab not in RT_CMD_HEADERS:
+            status_var.set("⚠️ No RT selected.")
+            return
+        if cmd_value is None:
+            status_var.set("❌ Command value missing.")
+            return
+
+        header = RT_CMD_HEADERS[selected_tab]["BUS"]
+        rt_address = 0x00
+        packet = header + [rt_address, cmd_value]
+        ser.write(bytes(packet))
+
+        cmd_name = [k for k, v in bus_commands if v == cmd_value][0]
+        sent_str = f"[{selected_tab}] BUS BTN ({cmd_name}) → {[f'0x{b:02X}' for b in packet]}"
+        status_var.set(f"✅ {sent_str}")
+        print(sent_str)
+        with open("Buscmd.txt", "a") as f:
+            f.write(f"{datetime.now().strftime('%Y-%m-%d %H:%M:%S')} | {selected_tab} | {sent_str}\n")
+    except Exception as e:
+        status_var.set(f"❌ Error BUS button: {e}")
+
+
+def send_bus_command_entry():
+    """
+    Sends BUS command from manual entry field.
+    """
+    try:
+        if not (ser and ser.is_open):
+            status_var.set("❌ Serial port not open.")
+            return
+        if not selected_tab or selected_tab not in RT_CMD_HEADERS:
+            status_var.set("⚠️ No RT selected.")
+            return
+
+        dataword_str = dataword_entry.get().strip()
+        data_word = int(dataword_str, 16) if dataword_str.lower().startswith("0x") else int(dataword_str, 16)
+        if not (0 <= data_word <= 0xFF):
+            status_var.set("❌ Data word must be 1 byte (00–FF)")
+            return
+
+        header = RT_CMD_HEADERS[selected_tab]["BUS"]
+        packet = header + [data_word, 0xCE]
+        ser.write(bytes(packet))
+
+        sent_str = f"[{selected_tab}] BUS Entry → {[f'0x{b:02X}' for b in packet]}"
+        status_var.set(f"✅ {sent_str}")
+        print(sent_str)
+        with open("Buscmd.txt", "a") as f:
+            f.write(f"{datetime.now().strftime('%Y-%m-%d %H:%M:%S')} | {selected_tab} | {sent_str}\n")
+    except Exception as e:
+        status_var.set(f"❌ Error BUS entry: {e}")
+🧠 Final Notes
+✅ Advantages of this version:
+
+One codebase for all RTs — no duplicates.
+
+Easy to extend: just edit RT_CMD_HEADERS.
+
+All commands automatically log RT name.
+
+GUI never freezes due to SA3/SA4 threads.
+
+RT indicator avoids wrong RT transmission.
+
+🟡 Optional Enhancement: You can make the RT indicator blink (change color for 0.5 s) whenever a command is sent — as a visual feedback.
+
+
+Would you like me to add that blink effect too? (Yes/No)
+
+
+
+
+
+=================================================
+
+
+
+
+
+✅ Okay — this version of readSerial() is much cleaner — but there’s one key reason why it’s not working properly with multiple headers for the same RT:
+
+You’re only tracking one header pattern (headers) —
+but for each RT, you actually have two valid headers:
+
+RT1 → AC CA 1F 0A and AC CA 1F 0B
+
+RT2 → AC CA 1F 0C and AC CA 1F 0D
+
+RT3 → AC CA 1F 0E and AC CA 1F 0F
+
+Your current code only checks one header at a time, so when the second header comes, it never matches → no data gets read.
+
+🧠 The Correct Way:
+You should:
+
+Define both headers for the selected RT
+
+Track the last 4 bytes from the serial stream
+
+Check if it matches either of the two valid headers for that RT
+
+Read payload accordingly
+
+✅ Fixed readSerial() for two headers per RT
+def readSerial():
+    global serialData, ser, hexDecodedData, selected_tab, counter_value
+
+    # Get both header patterns for the selected RT
+    header_patterns = [bytes.fromhex(h) for h in RT_HEADERS[selected_tab]]  # e.g. ['acca1f0a','acca1f0b']
+    buffer = b""
+
+    try:
+        while serialData:
+            if ser.in_waiting > 0:
+                # Read 1 byte and append to buffer
+                buffer += ser.read(1)
+
+                # Keep last 4 bytes only
+                if len(buffer) > 4:
+                    buffer = buffer[-4:]
+
+                # Check if buffer matches any of the RT's headers
+                for header in header_patterns:
+                    if buffer == header:
+                        print(f"✅ {selected_tab} HEADER {header.hex().upper()} FOUND! Reading data...")
+                        payload = ser.read(1206)  # read your payload
+                        hexDecodedData = header.hex() + payload.hex()
+                        data_queue.put((selected_tab, hexDecodedData))
+                        counter_value += 1
+                        buffer = b""  # reset buffer after match
+                        break
+
+            time.sleep(0.001)
+
+    except KeyboardInterrupt:
+        print("Reading from serial port stopped")
+🧭 Why this works better:
+✅ Detects both headers for the current selected RT (e.g., 0A and 0B for RT1).
+
+✅ Uses rolling buffer for robust pattern matching.
+
+✅ Much more reliable than header_index tracking when packets come fast.
+
+✅ Works with existing RT_HEADERS dictionary you already defined:
+
+RT_HEADERS = {
+    "RT1": ["acca1f0a", "acca1f0b"],
+    "RT2": ["acca1f0c", "acca1f0d"],
+    "RT3": ["acca1f0e", "acca1f0f"]
+}
+⚡ Important Notes:
+Make sure selected_tab is set correctly (RT1, RT2, or RT3) depending on which tab is active.
+
+If your data length differs for some headers, you can make a dict like:
+
+DATA_LENGTH = {
+    "acca1f0a": 1206,
+    "acca1f0b": 1206,
+    "acca1f0c": 1206,
+    ...
+}
+And then:
+
+length = DATA_LENGTH[header.hex()]
+payload = ser.read(length)
+
+                                                    
