@@ -1602,27 +1602,26 @@ def extract_sa4w32_flags(word32):
  
  
 def process_data():
-    global base_name,filename
+    global base_name, filename
     try:
-        while True:
+        if not data_queue.empty():
             item = data_queue.get()
-            if not item:
-                continue
-            rt_name, hexDecodedData = item
-            
-            # Process based on which RT the data belongs to
-            if rt_name == "RT1":
-                # Process RT1 data and update RT1 widgets
-                process_rt_data(hexDecodedData, "RT1")
-            elif rt_name == "RT2":
-                # Process RT2 data and update RT2 widgets
-                process_rt_data(hexDecodedData, "RT2")
-            elif rt_name == "RT3":
-                # Process RT3 data and update RT3 widgets
-                process_rt_data(hexDecodedData, "RT3")
-                
+            if item:
+                rt_name, hexDecodedData = item
+
+                # Process based on which RT the data belongs to
+                if rt_name == "RT1":
+                    process_rt_data(hexDecodedData, "RT1")
+                elif rt_name == "RT2":
+                    process_rt_data(hexDecodedData, "RT2")
+                elif rt_name == "RT3":
+                    process_rt_data(hexDecodedData, "RT3")
+
     except Exception as e:
         print(f"Error processing data: {e}")
+    finally:
+        # Schedule the next check after 1000 ms (1 second)
+        root.after(1000, process_data)
 
 def process_rt_data(hexDecodedData, rt_name):
     """Process data for a specific RT and update its widgets"""
