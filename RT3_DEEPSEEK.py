@@ -1532,74 +1532,81 @@ def refresh_cndr_plot(rt_name="RT1"):
         print(f"CNDR plot update error for {rt_name}:", e)
 
 def readSerial():
-    global serialData,ser,hexDecodedData
+    global serialData, ser, hexDecodedData
+    global counter_value, counter_value2, counter_value3
+
     # Define headers for all RTs
     headers = {
-        "RT1_A": ["ac", "ca", "1f", "0a"],  # ACC A1F0A (1200 bytes)
-        "RT1_B": ["ac", "ca", "1f", "0b"],  # ACC A1F0B (64 bytes)
-        "RT2_C": ["ac", "ca", "1f", "0c"],  # ACC A1F0C (1200 bytes)
-        "RT2_D": ["ac", "ca", "1f", "0d"],  # ACC A1F0D (64 bytes)
-        "RT3_E": ["ac", "ca", "1f", "0e"],  # ACC A1F0E (1200 bytes)
-        "RT3_F": ["ac", "ca", "1f", "0f"],  # ACC A1F0F (64 bytes)
+        "RT1_A": ["ac", "ca", "1f", "0a"],  # 1200 bytes
+        "RT1_B": ["ac", "ca", "1f", "0b"],  # 64 bytes
+        "RT2_C": ["ac", "ca", "1f", "0c"],  # 1200 bytes
+        "RT2_D": ["ac", "ca", "1f", "0d"],  # 64 bytes
+        "RT3_E": ["ac", "ca", "1f", "0e"],  # 1200 bytes
+        "RT3_F": ["ac", "ca", "1f", "0f"],  # 64 bytes
     }
-    
+
+    # Track header matching progress
     header_indices = {key: 0 for key in headers.keys()}
-    
+
     try:
         while serialData:
             if ser.in_waiting > 0:
                 byte = ser.read(1).hex()
-                
+
                 # Check all headers
                 for header_name, header_bytes in headers.items():
+
+                    # Matching next expected byte
                     if byte == header_bytes[header_indices[header_name]]:
                         header_indices[header_name] += 1
+
+                        # Full header matched
                         if header_indices[header_name] == len(header_bytes):
-                            print(f"{header_name} found! reading data")
-                            
-                            # Determine data length based on header
-                            if header_name.endswith(("A", "C", "E")):  # 1200 byte packets
+                            print(f"\n{header_name} FOUND")
+
+                            # Determine packet size
+                            if header_name.endswith(("A", "C", "E")):
                                 data_length = 1200
-                            else:  # 64 byte packets
+                            else:
                                 data_length = 64
-                            
-                            hexDecodedData = ''.join(header_bytes) + ser.read(data_length).hex()
-                            
-                            # Determine which RT this belongs to
+
+                            # Read full packet
+                            payload = ser.read(data_length).hex()
+                            hexDecodedData = ''.join(header_bytes) + payload
+
+                            # ✅ Print full raw data
+                            print(hexDecodedData.upper())
+                            print()
+
+                            # Determine RT group
                             if header_name.startswith("RT1"):
                                 rt_name = "RT1"
+                                counter_value += 1
                             elif header_name.startswith("RT2"):
                                 rt_name = "RT2"
-                            elif header_name.startswith("RT3"):
-                                rt_name = "RT3"
-                            else:
-                                rt_name = "RT1"  # Default
-                            
-                            data_queue.put((rt_name, hexDecodedData))
-                            print(f"{header_name}: {hexDecodedData[:50]}...")
-                            
-                            # Update appropriate counter
-                            if rt_name == "RT1":
-                                global counter_value
-                                counter_value += 1
-                            elif rt_name == "RT2":
-                                global counter_value2
                                 counter_value2 += 1
-                            elif rt_name == "RT3":
-                                global counter_value3
+                            else:
+                                rt_name = "RT3"
                                 counter_value3 += 1
-                            
+
+                            # Push to queue
+                            data_queue.put((rt_name, hexDecodedData))
+
+                            # Reset header index
                             header_indices[header_name] = 0
+
                     else:
+                        # Restart header search if mismatch
                         if byte == "ac":
                             header_indices[header_name] = 1
                         else:
                             header_indices[header_name] = 0
-            
+
             time.sleep(0.001)
-                        
+
     except KeyboardInterrupt:
         print("Reading from serial port stopped")
+
        
 def extract_word20_flags(word20):
     
