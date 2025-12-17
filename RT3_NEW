@@ -1,0 +1,1428 @@
+# -*- coding: utf-8 -*-
+"""
+Created on Thu Sep 18 19:26:55 2025
+
+@author: TEJASWINI M
+"""
+
+import serial
+import serial.tools.list_ports
+import threading
+from tkinter import filedialog
+import queue
+from tkinter import ttk
+from tkinter import *
+import tkinter as tk
+import time
+import time as cmdtime
+import csv
+from tkinter import Radiobutton, StringVar, OptionMenu
+from datetime import datetime
+import os
+import platform
+from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
+from matplotlib.figure import Figure
+
+# Global variables
+serialData = False
+ser = None
+counter_value = 0
+counter_value2 = 0
+counter_value3 = 0
+num_channels = 18
+
+# Threads and running flags for SA3 and SA4
+sa3_thread = None
+sa3_running = False
+sa4_thread = None
+sa4_running = False
+
+# Global controls
+replay_running = False
+replay_paused = False
+jump_target_sec = None
+replay_filepath = None
+
+# GUI Entries storage
+manual_entries = {}
+file_entries = {}
+
+SESSION_TIMESTAMP = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+
+# All 18 bit names
+bit_names = ["A", "T", "D", "E", "P", "H", "R", "P1", "I", "S", "SR", "E1"]
+
+# Data queue for serial communication
+data_queue = queue.Queue()
+
+# RT widget storage dictionaries
+rt1_widgets = {}
+rt2_widgets = {}
+rt3_widgets = {}
+
+# Command definitions
+commands = {
+    "playback-off": "0x0002", "playback-on": "0x0003",
+    "storage-on": "0x0004", "storage-off": "0x0005",
+    "sps-mvn-on": "0x0006", "sps-mvn-off": "0x0007",
+    "sps-model1": "0x000A", "sps-model2": "0x000B", "sps-model3": "0x000C",
+    "sps-model4": "0x000D", "sps-model5": "0x000E",
+    "sps-c-s-E": "0x000F", "sps-c-s-D": "0x0010",
+    "sps-iono-c-E": "0x0011", "sps-iono-c-D": "0x0012",
+    "sps-raim-chk1-E": "0x0015", "sps-raim-chk1-D": "0x0016",
+    "sps-raim-chk2-E": "0x0017", "sps-raim-chk2-D": "0x0018",
+    "navic/1g-msg-E": "0x0025", "navic/1g-msg-D": "0x0026",
+    "velocity-smoothing-E": "0x0027", "velocity-smoothing-D": "0x0028",
+    "port1-conf-gps": "0x0030", "port1-conf-navic": "0x0031", "port1-conf-combained": "0x0032",
+    "port1-config-gps": "0x0033", "port1-config-navic": "0x0034", "port1-config-combained": "0x0035",
+    "sps iono smoothing E": "0x0038", "sps iono smoothing D": "0x0039",
+    "pb-ccsds on": "0x003A", "pb-ccsds off": "0x003B",
+    "randomizer/scrambler on": "0x003C", "randomizer/scrambler off": "0x003D",
+    "pr module new": "0x003E", "pr module old": "0x003F",
+    "elevation logic D": "0x0040", "elevation logic E": "0x0041",
+    "sps-sw wdt E": "0x0042", "sps-sw wdt D": "0x0043",
+    "s/w model change eeprom to prom": "0x0044", "s/w model change prom to eeprom": "0x0045",
+    "phase center CAL D": "0x004C", "phase center CAL E": "0x004D",
+    "phase center use for SPS D": "0x004E", "phase center use for SPS E": "0x004F",
+    "odp1 s/w reset": "0x0050", "odp E": "0x0051", "odp D": "0x0052",
+    "odp 10s E": "0x0053", "odp 10s D": "0x0054",
+    "filter init commnd": "0x0055", "odp eop E cmd": "0x0056", "odp eop D cmd": "0x0057",
+    "odp AnTphc usable": "0x0058", "odp AnTphc not usable": "0x0059",
+    "odp Maneuver E": "0x005A", "odp Maneuver D": "0x005B",
+    "odp mode change to test mode": "0x005C", "odp mode change to normal mode": "0x005D",
+    "odp mode change to disable mode": "0x005E", "odp2 s/w reset": "0x005F",
+    "odp power on default config load": "0x0060", "odp clock streeing E": "0x0062",
+    "odp clock streeing D": "0x0063",
+    "AIS IQ data on": "0x0081", "AIS IQ data off": "0x0082",
+    "lais fe reset": "0x0083", "cais fe reset": "0x0084",
+    "test demond prbs E": "0x0085", "test demond prbs D": "0x0086",
+    "test IQ prbs E": "0x0087", "test IQ prbs D": "0x0088",
+    "sps l1 track thres": "0x80B1", "sps l1 acq thres": "0x83B1",
+    "sps-c limit value": "0x86B1", "sps-c restart val": "0x87B1",
+    "sps iono alpha fac word": "0x90B1", "sps iono height": "0x91B1",
+    "sps-storage sampling rate": "0x9300", "pb frame length word": "0xAC00",
+    "week roll over value": "0xAB00", "pps h/w delay": "0xB000",
+    "Elevation Angle Threshold": "0xB100", "Navic Tel ID": "0xB300",
+    "AIS ch1 thrld_num": "0xC0B1", "AIS ch1 thrld_demon": "0xC1B1",
+    "AIS ch1 thrld_ffft": "0xC2B1", "AIS ch1 sync trans": "0xCCB1",
+    "AIS ch2 thrld_num": "0xC3B1", "AIS ch2 thrld_demon": "0xC4B1",
+    "AIS ch2 thrld_ffft": "0xC5B1", "AIS ch2 sync trans": "0xCDB1",
+    "AIS ch3 thrld_num": "0xC6B1", "AIS ch3 thrld_demon": "0xC7B1",
+    "AIS ch3 thrld_ffft": "0xC8B1", "AIS ch3 sync trans": "0xCEB1",
+    "AIS ch4 thrld_num": "0xC9B1", "AIS ch4 thrld_demon": "0xCAB1",
+    "AIS ch4 thrld_ffft": "0xCBB1", "AIS ch4 sync trans": "0xCFB1",
+}
+
+# BUS command codes
+bus_command_buttons = {}
+bus_commands = [
+    ("Reset", 0x01),
+    ("HWDT Enable", 0x02),
+    ("HWDT Disable", 0x03),
+    ("SWDT Enable", 0x04),
+    ("SWDT Disable", 0x05),
+    ("DC/DC ON", 0x06),
+    ("DC/DC OFF", 0x07),
+]
+
+
+# ==================== FILE SAVING FUNCTIONS ====================
+def get_timestamped_filename(base_name: str, suffix: str, rt_name: str = "") -> str:
+    """
+    Generate consistent file name in format:
+    GAGANYAN_YYYY-MM-DD_HH-MM-SS_RTNAME_BASENAME_SUFFIX.csv
+    """
+    if rt_name:
+        return f"GAGANYAN_{SESSION_TIMESTAMP}_{rt_name}_{base_name}_{suffix}.csv"
+    else:
+        return f"GAGANYAN_{SESSION_TIMESTAMP}_{base_name}_{suffix}.csv"
+
+
+def write_to_raw_1200(data, base_name, rt_name="RT1"):
+    file_name = get_timestamped_filename(base_name, "Raw_1200", rt_name)
+    header = ['TimeStamp', 'RT', 'PacketType', 'RAW_DATA_1200']
+    
+    with open(file_name, mode='a', newline='') as file:
+        writer = csv.writer(file)
+        if file.tell() == 0:
+            writer.writerow(header)
+        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
+        writer.writerow([timestamp, rt_name, "1200_BYTE", data])
+
+
+def write_to_raw_64(data, base_name, rt_name="RT1"):
+    file_name = get_timestamped_filename(base_name, "Raw_64", rt_name)
+    header = ['TimeStamp', 'RT', 'PacketType', 'RAW_DATA_64']
+    
+    with open(file_name, mode='a', newline='') as file:
+        writer = csv.writer(file)
+        if file.tell() == 0:
+            writer.writerow(header)
+        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
+        writer.writerow([timestamp, rt_name, "64_BYTE", data])
+
+
+def write_to_SYN(data, base_name, rt_name="RT1"):
+    file_name = get_timestamped_filename(base_name, "Sync", rt_name)
+    header = ['TimeStamp', 'RT', 'SYN_SECOND', 'SYN_NANOSECOND', 'SYN_WEEKNUMBER']
+    
+    with open(file_name, mode='a', newline='') as file:
+        writer = csv.writer(file)
+        if file.tell() == 0:
+            writer.writerow(header)
+        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
+        writer.writerow([timestamp, rt_name] + data)
+
+
+def write_to_SYS(data, base_name, rt_name="RT1"):
+    file_name = get_timestamped_filename(base_name, "System", rt_name)
+    header = ['TimeStamp', 'RT', 'SYS_SECOND', 'SYS_NANOSECOND', 'SYS_WEEKNUMBER']
+    
+    with open(file_name, mode='a', newline='') as file:
+        writer = csv.writer(file)
+        if file.tell() == 0:
+            writer.writerow(header)
+        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
+        writer.writerow([timestamp, rt_name] + data)
+
+
+def write_to_pvt(data, base_name, rt_name="RT1"):
+    file_name = get_timestamped_filename(base_name, "PVT", rt_name)
+    header = ['TimeStamp', 'RT', 'Counter', 'Sys_Second', 'Sys_NanoSecond', 'Sys_WeekNumber']
+    
+    with open(file_name, mode='a', newline='') as file:
+        writer = csv.writer(file)
+        if file.tell() == 0:
+            writer.writerow(header)
+        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
+        writer.writerow([timestamp, rt_name] + data)
+
+
+def write_rt_summary(rt_name, counter_value, status="ACTIVE"):
+    """Write RT summary to a separate file"""
+    summary_file = f"GAGANYAN_{SESSION_TIMESTAMP}_RT_SUMMARY.csv"
+    header = ['RT', 'Packet_Count', 'Last_Update', 'Status']
+    
+    with open(summary_file, mode='a', newline='') as file:
+        writer = csv.writer(file)
+        if file.tell() == 0:
+            writer.writerow(header)
+        
+        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
+        writer.writerow([rt_name, counter_value, timestamp, status])
+
+
+def write_command_log(command_type, command_data, rt_name="RT1"):
+    """Write command log with RT information"""
+    cmd_log_file = f"GAGANYAN_{SESSION_TIMESTAMP}_COMMAND_LOG.csv"
+    header = ['Timestamp', 'RT', 'Command_Type', 'Command_Data', 'Status']
+    
+    with open(cmd_log_file, mode='a', newline='') as file:
+        writer = csv.writer(file)
+        if file.tell() == 0:
+            writer.writerow(header)
+        
+        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
+        writer.writerow([timestamp, rt_name, command_type, command_data, "SENT"])
+
+
+# ==================== DATA PROCESSING FUNCTIONS ====================
+def reverse_and_concatenate(hex_list, scale=1, is_signed=False):
+    if len(hex_list) in [1, 2, 3, 4, 8]:
+        if len(hex_list) == 1:
+            concatenated_hex = ''.join(hex_list)
+            decimal_value = int(concatenated_hex, 16)
+        elif len(hex_list) == 2:
+            concatenated_hex = ''.join(hex_list)
+            decimal_value = int(concatenated_hex, 16)
+        elif len(hex_list) == 3:
+            concatenated_hex = ''.join(hex_list)
+            decimal_value = int(concatenated_hex, 16)
+        elif len(hex_list) == 4:
+            first_half = ''.join(hex_list[:2])
+            second_half = ''.join(hex_list[2:])
+            concatenated_hex = second_half + first_half
+            decimal_value = int(concatenated_hex, 16)
+        elif len(hex_list) == 8:
+            first_half = ''.join(hex_list[:4])
+            second_half = ''.join(hex_list[4:])
+            reversed_first_half = first_half[6:8] + first_half[4:6] + first_half[2:4] + first_half[0:2]
+            reversed_second_half = second_half[6:8] + second_half[4:6] + second_half[2:4] + second_half[0:2]
+            concatenated_hex = reversed_first_half + reversed_second_half
+            decimal_value = int(concatenated_hex, 16)
+
+        if is_signed:
+            if decimal_value >= 0x80000000:
+                decimal_value -= 0x100000000
+
+        return decimal_value
+    return None
+
+
+def convert_to_decimal(hex_str):
+    reversed_hex = ''.join([hex_str[i:i+2] for i in range(0, len(hex_str), 2)][::-1])
+    return int(reversed_hex, 16)
+
+
+def decode_channel_status_meaning(status_word):
+    bits = [(status_word >> i) & 1 for i in range(16)]
+    T = "T" if bits[0] else "NT"
+    S = "S" if bits[1] else "NS"
+    antenna_bits = (bits[9] << 1) | bits[8]
+    antenna_map = {
+        0b00: "1",
+        0b01: "2",
+        0b10: "3",
+        0b11: "4",
+    }
+    
+    return {
+        "T": f"{T}/{S}",
+        "E": "Y" if bits[2] else "N",
+        "P": "Y" if bits[3] else "N",
+        "I": "Y" if bits[4] else "N",
+        "S": "Y" if bits[5] else "N",
+        "P1": "P" if bits[6] else "R",
+        "H": "G" if bits[7] else "B",
+        "A": antenna_map.get(antenna_bits, "UK"),
+        "SR": "P" if bits[10] else "R",
+        "R": "P" if bits[11] else "R",
+        "E1": "Y" if bits[12] else "N",
+        "D": "Y" if bits[14] else "N",
+    }
+
+
+def extract_word20_flags(word20):
+    sbasen_map = {0b00: "DISABLE", 0b01: "ENABLE"}
+    sys_mode_map = {0b01: "GPS", 0b10: "NAVIC", 0b11: "GPS+NAVIC"}
+    rec_mode_map = {0b01: "GPS", 0b10: "NAVIC", 0b11: "GPS+NAVIC"}
+    time_mode_map = {0b00: "NOT AV", 0b01: "GPS", 0b10: "NAVIC"}
+    alm_av_map = {0b00: "ALM AV", 0b01: "ALM NOT AV"}
+    time_av_map = {0b00: "TIME NOT AV", 0b01: "TIME AV"}
+    pose_mode_map = {0b00: "3D", 0b01: "01-2D", 0b10: "NOT AV"}
+    pose_av_map = {0b00: "POS NOT AV", 0b01: "POS AV"}
+
+    tm_sel_val = (word20 >> 15) & 0x1
+    swdt_val = (word20 >> 14) & 0x1
+    hwdt_val = (word20 >> 13) & 0x1
+    sbasen_val = (word20 >> 12) & 0x1
+    system_mode_val = (word20 >> 10) & 0x3
+    rec_mode_val = (word20 >> 8) & 0x3
+    time_mode_val = (word20 >> 6) & 0x3
+    alm_av_val = (word20 >> 4) & 0x3
+    time_av_val = (word20 >> 3) & 0x1
+    pose_mode_val = (word20 >> 1) & 0x3
+    pos_av_val = word20 & 0x1
+
+    return {
+        "Tm_sel": tm_sel_val,
+        "SWDT": swdt_val,
+        "HWDT": hwdt_val,
+        "SBASEN": sbasen_map.get(sbasen_val, str(sbasen_val)),
+        "System_mode": sys_mode_map.get(system_mode_val, str(system_mode_val)),
+        "Rec_Mode": rec_mode_map.get(rec_mode_val, str(rec_mode_val)),
+        "Time_Mode": time_mode_map.get(time_mode_val, str(time_mode_val)),
+        "Alm_Av": alm_av_map.get(alm_av_val, str(alm_av_val)),
+        "Time_Av": time_av_map.get(time_av_val, str(time_av_val)),
+        "Pose_Mode": pose_mode_map.get(pose_mode_val, str(pose_mode_val)),
+        "Pos_Av": pose_av_map.get(pos_av_val, str(pos_av_val)),
+    }
+
+
+# ==================== SERIAL COMMUNICATION FUNCTIONS ====================
+def readSerial():
+    global serialData, ser
+    headers = {
+        "RT1_1200": ["ac", "ca", "1f", "0a"],
+        "RT1_64": ["ac", "ca", "1f", "0b"],
+        "RT2_1200": ["ac", "ca", "1f", "0c"],
+        "RT2_64": ["ac", "ca", "1f", "0d"],
+        "RT3_1200": ["ac", "ca", "1f", "0e"],
+        "RT3_64": ["ac", "ca", "1f", "0f"],
+    }
+    
+    header_indices = {key: 0 for key in headers.keys()}
+    
+    try:
+        while serialData:
+            if ser.in_waiting > 0:
+                byte = ser.read(1).hex()
+                
+                for header_name, header_bytes in headers.items():
+                    if byte == header_bytes[header_indices[header_name]]:
+                        header_indices[header_name] += 1
+                        if header_indices[header_name] == len(header_bytes):
+                            packet_type = "1200" if header_name.endswith("1200") else "64"
+                            rt_name = header_name[:3]
+                            
+                            if packet_type == "1200":
+                                data_length = 1200
+                            else:
+                                data_length = 64
+                            
+                            hexDecodedData = ''.join(header_bytes) + ser.read(data_length).hex()
+                            data_queue.put((rt_name, packet_type, hexDecodedData))
+                            
+                            if rt_name == "RT1":
+                                global counter_value
+                                counter_value += 1
+                            elif rt_name == "RT2":
+                                global counter_value2
+                                counter_value2 += 1
+                            elif rt_name == "RT3":
+                                global counter_value3
+                                counter_value3 += 1
+                            
+                            header_indices[header_name] = 0
+                    else:
+                        if byte == "ac":
+                            header_indices[header_name] = 1
+                        else:
+                            header_indices[header_name] = 0
+            
+            time.sleep(0.001)
+                        
+    except KeyboardInterrupt:
+        print("Reading from serial port stopped")
+
+
+def process_data():
+    try:
+        while True:
+            item = data_queue.get()
+            if not item:
+                continue
+            
+            rt_name, packet_type, hexDecodedData = item
+            
+            if packet_type == "1200":
+                process_1200_packet(hexDecodedData, rt_name)
+            else:
+                process_64_packet(hexDecodedData, rt_name)
+                
+    except Exception as e:
+        print(f"Error processing data: {e}")
+
+
+def process_1200_packet(hexDecodedData, rt_name):
+    """Process 1200-byte main telemetry packet"""
+    print(f"Processing 1200-byte packet for {rt_name}")
+    write_to_raw_1200(hexDecodedData, "TELEMETRY", rt_name)
+    
+    # Get widget references
+    if rt_name == "RT1":
+        widgets = rt1_widgets
+        current_counter = counter_value
+    elif rt_name == "RT2":
+        widgets = rt2_widgets
+        current_counter = counter_value2
+    elif rt_name == "RT3":
+        widgets = rt3_widgets
+        current_counter = counter_value3
+    
+    try:
+        # Extract system time
+        SYS_NanoSecond_hex = hexDecodedData[140:148]
+        SYS_Second_hex = hexDecodedData[148:156]
+        SYS_Weeknumber_hex = hexDecodedData[156:160]
+        
+        SYS_Second = reverse_and_concatenate(SYS_Second_hex)
+        SYS_NanoSecond = reverse_and_concatenate(SYS_NanoSecond_hex)
+        SYS_WeekNumber = reverse_and_concatenate(SYS_Weeknumber_hex)
+        
+        # Save system time
+        sys_data = [str(SYS_Second), str(SYS_NanoSecond), str(SYS_WeekNumber)]
+        write_to_SYS(sys_data, "TIME", rt_name)
+        
+        # Update widgets
+        if 'time_entry' in widgets:
+            widgets['time_entry'].config(state="normal")
+            widgets['time_entry'].delete(0, END)
+            widgets['time_entry'].insert(0, str(SYS_Second))
+            widgets['time_entry'].config(state="readonly")
+            
+        if 'nanotime_entry' in widgets:
+            widgets['nanotime_entry'].config(state="normal")
+            widgets['nanotime_entry'].delete(0, END)
+            widgets['nanotime_entry'].insert(0, str(SYS_NanoSecond))
+            widgets['nanotime_entry'].config(state="readonly")
+            
+        if 'week_entry' in widgets:
+            widgets['week_entry'].config(state="normal")
+            widgets['week_entry'].delete(0, END)
+            widgets['week_entry'].insert(0, str(SYS_WeekNumber))
+            widgets['week_entry'].config(state="readonly")
+        
+        # Update counter display
+        if 'counter_entry' in widgets:
+            widgets['counter_entry'].config(state="normal")
+            widgets['counter_entry'].delete(0, END)
+            widgets['counter_entry'].insert(0, str(current_counter))
+            widgets['counter_entry'].config(state="readonly")
+        
+        # Write summary
+        write_rt_summary(rt_name, current_counter, "ACTIVE")
+        
+    except Exception as e:
+        print(f"Error processing 1200-byte packet for {rt_name}: {e}")
+
+
+def process_64_packet(hexDecodedData, rt_name):
+    """Process 64-byte sync/status packet"""
+    print(f"Processing 64-byte packet for {rt_name}")
+    write_to_raw_64(hexDecodedData, "SYNC", rt_name)
+    
+    # Get widget references
+    if rt_name == "RT1":
+        widgets = rt1_widgets
+    elif rt_name == "RT2":
+        widgets = rt2_widgets
+    elif rt_name == "RT3":
+        widgets = rt3_widgets
+    
+    try:
+        if len(hexDecodedData) >= 40:
+            SYN_NanoSecond_hex = hexDecodedData[12:20]
+            SYN_Second_hex = hexDecodedData[20:28]
+            SYN_Weeknumber_hex = hexDecodedData[28:32]
+            
+            SYN_Second = reverse_and_concatenate(SYN_Second_hex)
+            SYN_NanoSecond = reverse_and_concatenate(SYN_NanoSecond_hex)
+            SYN_WeekNumber = reverse_and_concatenate(SYN_Weeknumber_hex)
+            
+            # Save sync time
+            syn_data = [str(SYN_Second), str(SYN_NanoSecond), str(SYN_WeekNumber)]
+            write_to_SYN(syn_data, "SYNC_TIME", rt_name)
+            
+            # Update widgets
+            if 'time_entry1' in widgets:
+                widgets['time_entry1'].config(state="normal")
+                widgets['time_entry1'].delete(0, END)
+                widgets['time_entry1'].insert(0, str(SYN_Second))
+                widgets['time_entry1'].config(state="readonly")
+                
+            if 'nanotime_entry1' in widgets:
+                widgets['nanotime_entry1'].config(state="normal")
+                widgets['nanotime_entry1'].delete(0, END)
+                widgets['nanotime_entry1'].insert(0, str(SYN_NanoSecond))
+                widgets['nanotime_entry1'].config(state="readonly")
+                
+            if 'week_entry1' in widgets:
+                widgets['week_entry1'].config(state="normal")
+                widgets['week_entry1'].delete(0, END)
+                widgets['week_entry1'].insert(0, str(SYN_WeekNumber))
+                widgets['week_entry1'].config(state="readonly")
+        
+    except Exception as e:
+        print(f"Error processing 64-byte packet for {rt_name}: {e}")
+
+
+# ==================== GUI FUNCTIONS ====================
+def update_project_name(project_name_var, header_label):
+    input_name = project_name_var.get().strip()
+    if not input_name or input_name.lower() == "gaganyaan":
+        display_name = "GAGANYAAN"
+    else:
+        display_name = input_name.upper()
+    header_label.config(text=f"SPS TELEMETRY AND COMMAND INTERFACE: {display_name}")
+
+
+def connect_check(args):
+    global clicked_bd, clicked_com
+    if "-" in clicked_com.get() or "-" in clicked_bd.get():
+        connect_btn["state"] = "disabled"
+    else:
+        connect_btn["state"] = "active"
+
+
+def baud_select():
+    global clicked_bd, drop_bd, frame1
+    clicked_bd = StringVar()
+    bds = ["-", "300", "600", "1200", "2400", "4800", "9600", "14400", "19200", 
+           "28800", "38400", "56000", "57600", "115200", "128000", "256000"]
+    clicked_bd.set(bds[0])
+    drop_bd = OptionMenu(frame1, clicked_bd, *bds, command=connect_check)
+    drop_bd.config(height=1, width=10, font=("Calibri", 12), bg="burlywood")
+    drop_bd.grid(column=4, row=1, padx=2)
+
+
+def update_coms():
+    global clicked_com, drop_COM, frame1
+    ports = serial.tools.list_ports.comports()
+    coms = [com[0] for com in ports]
+    coms.insert(0, "-")
+    try:
+        drop_COM.destroy()
+    except:
+        pass
+    clicked_com = StringVar()
+    clicked_com.set(coms[0])
+    drop_COM = OptionMenu(frame1, clicked_com, *coms, command=connect_check)
+    drop_COM.config(height=1, width=10, font=("Calibri", 12), bg="burlywood")
+    drop_COM.grid(column=1, row=1, padx=2)
+    connect_check(0)
+
+
+def open_popup():
+    popup = tk.Toplevel()
+    popup.title("Commands")
+    popup.geometry("300x300")
+
+    popup.grid_rowconfigure(1, weight=1)
+    popup.grid_columnconfigure(0, weight=1)
+
+    search_var = tk.StringVar()
+    search_entry = tk.Entry(popup, textvariable=search_var, fg="blue")
+    search_entry.grid(row=0, column=0, sticky="ew", padx=5, pady=5)
+    search_entry.insert(0, " ")
+
+    text_area = tk.Text(popup, wrap=tk.WORD, height=10)
+    text_area.grid(row=1, column=0, sticky="nsew", padx=(5, 0), pady=(0, 5))
+
+    scrollbar = tk.Scrollbar(popup, command=text_area.yview)
+    scrollbar.grid(row=1, column=1, sticky="ns", pady=(0, 5))
+    text_area.config(yscrollcommand=scrollbar.set)
+
+    def highlight(term):
+        text_area.tag_remove("highlight", "1.0", tk.END)
+        if not term:
+            return
+        start = "1.0"
+        while True:
+            pos = text_area.search(term, start, stopindex=tk.END, nocase=True)
+            if not pos:
+                break
+            end = f"{pos}+{len(term)}c"
+            text_area.tag_add("highlight", pos, end)
+            start = end
+        text_area.tag_config("highlight", background="yellow")
+
+    def display_commands():
+        term = search_var.get().strip().lower()
+        text_area.delete("1.0", tk.END)
+        for cmd, desc in commands.items():
+            combined = f"{cmd}: {desc}".lower()
+            if term in combined:
+                text_area.insert(tk.END, f"{cmd}: {desc}\n")
+        highlight(term)
+
+    def on_focus_in(event):
+        if search_entry.get() == "Search cmd":
+            search_entry.delete(0, tk.END)
+            search_entry.config(fg="black")
+
+    def on_focus_out(event):
+        if not search_entry.get():
+            search_entry.insert(0, "Search cmd")
+            search_entry.config(fg="grey")
+
+    search_entry.bind("<FocusIn>", on_focus_in)
+    search_entry.bind("<FocusOut>", on_focus_out)
+    search_entry.bind("<KeyRelease>", lambda e: display_commands())
+    display_commands()
+
+
+def send_general_command(data_str, cmd_type):
+    global sa3_thread, sa3_running, sa4_thread, sa4_running
+
+    if not (ser and ser.is_open):
+        status_var.set("❌ Serial port not open.")
+        return
+
+    if cmd_type in ("SA3", "SA4"):
+        filepath = file_entries[cmd_type].get()
+        if not filepath or not os.path.exists(filepath):
+            status_var.set(f"❌ Please select a valid file for {cmd_type} commands.")
+            return
+
+        if cmd_type == "SA3":
+            if sa3_thread and sa3_thread.is_alive():
+                status_var.set("❌ SA3 sending already running!")
+                return
+            sa3_running = True
+            sa3_thread = threading.Thread(target=send_sax_from_file, args=(filepath, 0.064, cmd_type), daemon=True)
+            sa3_thread.start()
+            status_var.set("▶️ SA3 sending started.")
+        else:
+            if sa4_thread and sa4_thread.is_alive():
+                status_var.set("❌ SA4 sending already running!")
+                return
+            sa4_running = True
+            sa4_thread = threading.Thread(target=send_sax_from_file, args=(filepath, 1.0, cmd_type), daemon=True)
+            sa4_thread.start()
+            status_var.set("▶️ SA4 sending started.")
+        return
+
+    try:
+        parts = data_str.strip().split()
+        if len(parts) != 3:
+            status_var.set("❌ Enter exactly 3 words (e.g. 0x0000 0x0004 0x0055)")
+            return
+
+        words = [int(word, 16) for word in parts]
+
+        if cmd_type == "SA1":
+            header = [0xAC, 0xCA, 0x1F, 0x01]
+        elif cmd_type == "SA2":
+            header = [0xAC, 0xCA, 0x1F, 0x02]
+        else:
+            status_var.set("❌ Unknown subaddress type!")
+            return
+
+        data_bytes = [b for word in words for b in word.to_bytes(2, byteorder='big')]
+        full_packet = header + data_bytes
+
+        ser.write(bytes(full_packet))
+        sent_str = f"Manual {cmd_type} command sent: {[f'0x{b:02X}' for b in full_packet]}"
+        status_var.set(f"✅ {sent_str}")
+        print(sent_str)
+        write_command_log(f"MANUAL {cmd_type}", sent_str, "RT1")
+
+    except ValueError:
+        status_var.set("❌ Invalid hex format. Use e.g. 0x0000 0x0004 0x0055")
+    except Exception as e:
+        status_var.set(f"❌ Error sending manual command: {e}")
+
+
+def send_sax_from_file(filepath, interval, cmd_type):
+    global sa3_running, sa4_running
+
+    try:
+        with open(filepath, 'rb') as f:
+            raw = f.read()
+
+        try:
+            as_text = raw.decode('ascii')
+            hexstr = ''.join(c for c in as_text if c in '0123456789abcdefABCDEF')
+            file_bytes = bytes.fromhex(hexstr)
+        except Exception:
+            file_bytes = raw
+
+        if len(file_bytes) < 64:
+            status_var.set(f"❌ File must contain at least 64 bytes of data for {cmd_type}.")
+            if cmd_type == "SA3":
+                sa3_running = False
+            else:
+                sa4_running = False
+            return
+
+        header = [0xAC, 0xCA, 0x1F, 0x03] if cmd_type == "SA3" else [0xAC, 0xCA, 0x1F, 0x04]
+        num_blocks = len(file_bytes) // 64
+        idx = 0
+
+        while (sa3_running if cmd_type == "SA3" else sa4_running) and ser and ser.is_open:
+            start = idx * 64
+            end = start + 64
+            if end > len(file_bytes):
+                if cmd_type == "SA3":
+                    sa3_running = False
+                else:
+                    sa4_running = False
+                status_var.set(f"⏹️ {cmd_type} sending finished.")
+                break
+
+            chunk = file_bytes[start:end]
+            packet = bytes(header) + chunk
+            ser.write(packet)
+
+            sent_str = f"{cmd_type} packet sent (block {idx+1}/{num_blocks})"
+            status_var.set(f"✅ {sent_str}")
+            print(sent_str)
+            write_command_log(cmd_type, sent_str, "RT1")
+
+            idx += 1
+            for _ in range(int(interval * 1000 / 10)):
+                if not (sa3_running if cmd_type == "SA3" else sa4_running):
+                    status_var.set(f"⏹️ {cmd_type} sending stopped.")
+                    return
+                cmdtime.sleep(0.01)
+
+    except Exception as e:
+        status_var.set(f"❌ Error in {cmd_type} send: {e}")
+        if cmd_type == "SA3":
+            sa3_running = False
+        else:
+            sa4_running = False
+
+
+def stop_sa3():
+    global sa3_running
+    if sa3_running:
+        sa3_running = False
+        status_var.set("⏹️ Stopping SA3 sending...")
+
+
+def stop_sa4():
+    global sa4_running
+    if sa4_running:
+        sa4_running = False
+        status_var.set("⏹️ Stopping SA4 sending...")
+
+
+def on_bus_toggle(*args):
+    try:
+        if not (ser and ser.is_open):
+            status_var.set("❌ Serial port not open.")
+            return
+        if bus_var.get() not in ["A", "B"]:
+            return
+        header = [0xAC, 0xCA, 0x1F, 0x0B]
+        rt_address = 0x00
+        bus_val = 0x78 if bus_var.get() == "A" else 0x77
+        packet = header + [rt_address, bus_val]
+        bus_name = "BUS A" if bus_val == 0x78 else "BUS B"
+        ser.write(bytes(packet))
+        sent_str = f"Packet for toggle: {[f'0x{b:02X}' for b in packet]} ({bus_name})"
+        status_var.set(sent_str)
+        write_command_log("BUS_TOGGLE", sent_str, "RT1")
+    except Exception as e:
+        status_var.set(f"❌ Error sending bus command (button): {e}")
+
+
+def send_bus_command_button(cmd_value=None):
+    try:
+        if not (ser and ser.is_open):
+            status_var.set("❌ Serial port not open.")
+            return
+        rt_address = 0x00
+        if cmd_value is not None:
+            data_word = cmd_value
+            cmd_name = [k for k, v in bus_commands if v == cmd_value][0]
+        else:
+            status_var.set("❌ Command value not provided.")
+            return
+        header = [0xAC, 0xCA, 0x1F, 0x0B]
+        packet = header + [rt_address, data_word]
+        ser.write(bytes(packet))
+        sent_str = f"Sent (Button): {[f'0x{b:02X}' for b in packet]}  ({cmd_name}, RT=0x00, Data=0x{data_word:02X})"
+        status_var.set(f"✅ {sent_str}")
+        print(sent_str)
+        write_command_log("BUSCMD_BTN", sent_str, "RT1")
+    except Exception as e:
+        status_var.set(f"❌ Error sending bus command (button): {e}")
+
+
+def send_bus_command_entry():
+    try:
+        if not (ser and ser.is_open):
+            status_var.set("❌ Serial port not open.")
+            return
+        rt_address = 0xCE
+        dataword_str = dataword_entry.get().strip()
+        if dataword_str.lower().startswith("0x"):
+            data_word = int(dataword_str, 16)
+        else:
+            data_word = int(dataword_str, 16) if all(c in "0123456789abcdefABCDEF" for c in dataword_str) else int(dataword_str)
+        if not (0 <= data_word <= 0xFF):
+            status_var.set("❌ Data word must be 1 byte (00-FF)")
+            return
+        header = [0xAC, 0xCA, 0x1F, 0x0B]
+        packet = header + [data_word, rt_address]
+        sent_str = f"Sent (Entry): {[f'0x{b:02X}' for b in packet]}  (Manual Data=0x{data_word:02X}, RT=0xCE)"
+        ser.write(bytes(packet))
+        status_var.set(f"✅ {sent_str}")
+        print(sent_str)
+        write_command_log("BUSCMD_ENTRY", sent_str, "RT1")
+    except Exception as e:
+        status_var.set(f"❌ Error sending bus command (entry): {e}")
+
+
+# ==================== REPLAY FUNCTIONS ====================
+def replay_from_file():
+    global replay_running, replay_filepath, replay_paused
+    
+    if replay_running:
+        status_var.set("❌ Replay already running!")
+        return
+    
+    filepath = filedialog.askopenfilename(
+        title="Select Telemetry File for Replay",
+        filetypes=[("Text files", "*.txt"), ("CSV files", "*.csv"), ("All files", "*.*")]
+    )
+    
+    if not filepath:
+        return
+    
+    replay_filepath = filepath
+    replay_running = True
+    replay_paused = False
+    status_var.set(f"▶️ Replay started from {os.path.basename(filepath)}")
+    
+    replay_thread = threading.Thread(target=replay_thread_func, daemon=True)
+    replay_thread.start()
+
+
+def replay_thread_func():
+    global replay_running, replay_paused, jump_target_sec, replay_filepath
+    
+    try:
+        with open(replay_filepath, 'r') as f:
+            lines = f.readlines()
+        
+        for line in lines:
+            while replay_paused:
+                time.sleep(0.1)
+                if not replay_running:
+                    return
+            
+            if jump_target_sec is not None:
+                target_found = False
+                for i, l in enumerate(lines):
+                    if f"SYS_SEC: {jump_target_sec}" in l:
+                        lines = lines[i:]
+                        target_found = True
+                        break
+                
+                if target_found:
+                    status_var.set(f"↗️ Jumped to SYS_SEC: {jump_target_sec}")
+                else:
+                    status_var.set(f"❌ SYS_SEC {jump_target_sec} not found in file")
+                
+                jump_target_sec = None
+                continue
+            
+            # Process replay line based on header
+            if "ACCA1F0A" in line or "ACCA1F0C" in line or "ACCA1F0E" in line:
+                # 1200-byte packet
+                rt_name = "RT1" if "ACCA1F0A" in line else ("RT2" if "ACCA1F0C" in line else "RT3")
+                process_1200_packet(line.strip(), rt_name)
+            elif "ACCA1F0B" in line or "ACCA1F0D" in line or "ACCA1F0F" in line:
+                # 64-byte packet
+                rt_name = "RT1" if "ACCA1F0B" in line else ("RT2" if "ACCA1F0D" in line else "RT3")
+                process_64_packet(line.strip(), rt_name)
+            
+            time.sleep(0.1)
+            
+        replay_running = False
+        status_var.set("⏹️ Replay finished")
+        
+    except Exception as e:
+        status_var.set(f"❌ Replay error: {e}")
+        replay_running = False
+
+
+def jump_to_sys_sec():
+    global jump_target_sec
+    try:
+        target = int(jump_entry.get())
+        jump_target_sec = target
+        status_var.set(f"⏩ Jump to SYS_SEC {target} requested...")
+    except ValueError:
+        status_var.set("❌ Enter a valid integer for SYS_SEC")
+
+
+def toggle_pause_resume():
+    global replay_paused
+    if not replay_running:
+        status_var.set("❌ No replay running")
+        return
+    replay_paused = not replay_paused
+    if replay_paused:
+        btn_pause_resume.config(text="Resume ▶")
+        status_var.set("⏸️ Replay paused")
+    else:
+        btn_pause_resume.config(text="Pause ⏸")
+        status_var.set("▶️ Replay resumed")
+
+
+def stop_replay():
+    global replay_running
+    if replay_running:
+        replay_running = False
+        status_var.set("⏹️ Replay stopped")
+    else:
+        status_var.set("❌ No replay running")
+
+
+def connexion():
+    global ser, serialData, thread, thread2, clicked_com, clicked_bd
+    
+    if serialData:
+        serialData = False
+        ser.close()
+        connect_btn["text"] = "Connect"
+        status_var.set("Disconnected")
+    else:
+        port = clicked_com.get()
+        baud = clicked_bd.get()
+        
+        try:
+            ser = serial.Serial(port, baud, timeout=1)
+            serialData = True
+            thread = threading.Thread(target=readSerial, daemon=True)
+            thread.start()
+            thread2 = threading.Thread(target=process_data, daemon=True)
+            thread2.start()
+            connect_btn["text"] = "Disconnect"
+            status_var.set(f"Connected to {port} at {baud} baud")
+        except Exception as e:
+            status_var.set(f"Connection error: {e}")
+
+
+# ==================== GUI CREATION FUNCTIONS ====================
+def create_rt_display_widgets(parent_frame, rt_name):
+    """Create display widgets for a specific RT"""
+    bg_color = "burlywood" if rt_name == "RT1" else ("lightgreen" if rt_name == "RT2" else "lightcoral")
+    
+    # COUNTERS Frame
+    frame2 = LabelFrame(parent_frame, text=f"  COUNTERS ({rt_name})  ",
+        bg=bg_color, fg="dark red", font=("Calibri", 13, "bold"),
+        relief="solid", bd=2, padx=2, pady=2)
+    frame2.grid(row=0, column=2, padx=2, pady=2, sticky="nsew")
+   
+    update_count = Label(frame2, text="Update counter", font=("Calibri", 11, "bold"), bg=bg_color)
+    update_count.grid(row=0, column=0)
+    update_entry = Entry(frame2, width=10, font=("Calibri", 11, "bold"), bg=bg_color, fg="blue", state="readonly")
+    update_entry.grid(column=1, row=0, pady=2, padx=2)
+   
+    counter = Label(frame2, text="Display Counter", font=("Calibri", 11, "bold"), bg=bg_color)
+    counter.grid(row=1, column=0)
+    counter_entry = Entry(frame2, width=10, state="readonly", font=("Calibri", 11, "bold"), bg=bg_color, fg="red")
+    counter_entry.grid(column=1, row=1, pady=2, padx=2)
+    
+    sw_rst_c = Label(frame2, text="S/W RST Counter", font=("Calibri", 11, "bold"), bg=bg_color)
+    sw_rst_c.grid(row=2, column=0)
+    sw_rst_c = Entry(frame2, width=10, state="readonly", font=("Calibri", 11, "bold"), bg=bg_color)
+    sw_rst_c.grid(column=1, row=2, pady=2, padx=2)
+   
+    hw_rst_c = Label(frame2, text="H/W RST Counter", font=("Calibri", 11, "bold"), bg=bg_color)
+    hw_rst_c.grid(row=3, column=0)
+    hw_rst_c = Entry(frame2, width=10, state="readonly", font=("Calibri", 11, "bold"), bg=bg_color)
+    hw_rst_c.grid(column=1, row=3, pady=2, padx=2)
+   
+    tsm_counter = Label(frame2, text="Tsm_Counter", font=("Calibri", 11, "bold"), bg=bg_color)
+    tsm_counter.grid(row=4, column=0)
+    tsm_counter_entry = Entry(frame2, width=10, state="readonly", font=("Calibri", 11, "bold"), bg=bg_color)
+    tsm_counter_entry.grid(column=1, row=4, pady=2, padx=2)
+   
+    # TIME Frame
+    frame3 = LabelFrame(parent_frame, text=f"  TIME ({rt_name})  ",
+        bg=bg_color, fg="dark red", font=("Calibri", 13, "bold"),
+        relief="solid", bd=2, padx=2, pady=2)
+    frame3.grid(row=1, column=0, padx=2, pady=2, sticky="nsew")
+   
+    Name = Label(frame3, text=" System Time:", font=("Calibri", 11, "bold"), fg="blue", bg=bg_color, padx=5, pady=5)
+    Name.grid(row=1, column=1)
+    
+    weeks_label = Label(frame3, text="Week Number:", font=("Calibri", 11, "bold"), bg=bg_color)
+    weeks_label.grid(row=1, column=6)
+    week_entry = Entry(frame3, width=15, state="readonly", font=("Calibri", 11, "bold"), bg=bg_color, fg="brown")
+    week_entry.grid(row=1, column=7, pady=5, padx=5)
+    
+    time_label = Label(frame3, text="Second(s):", font=("Calibri", 11, "bold"), bg=bg_color)
+    time_label.grid(row=1, column=8)
+    time_entry = Entry(frame3, width=15, state="readonly", font=("Calibri", 11, "bold"), bg=bg_color, fg="brown")
+    time_entry.grid(row=1, column=9, pady=5, padx=5)
+   
+    nanotime_label = Label(frame3, text="Nano Second(ns):", font=("Calibri", 11, "bold"), bg=bg_color)
+    nanotime_label.grid(row=1, column=10)
+    nanotime_entry = Entry(frame3, width=15, state="readonly", font=("Calibri", 11, "bold"), bg=bg_color, fg="brown")
+    nanotime_entry.grid(row=1, column=11, pady=5, padx=5)
+   
+    Name = Label(frame3, text=" Sync Time:", font=("Calibri", 11, "bold"), fg="blue", bg=bg_color, padx=5, pady=5)
+    Name.grid(row=2, column=1)
+    
+    weeks_label1 = Label(frame3, text="Week Number:", font=("Calibri", 11, "bold"), bg=bg_color)
+    weeks_label1.grid(row=2, column=6)
+    week_entry1 = Entry(frame3, width=15, state="readonly", font=("Calibri", 11, "bold"), bg=bg_color, fg="brown")
+    week_entry1.grid(row=2, column=7, pady=5, padx=5)
+   
+    time_label1 = Label(frame3, text="Second(s):", font=("Calibri", 11, "bold"), bg=bg_color)
+    time_label1.grid(row=2, column=8)
+    time_entry1 = Entry(frame3, width=15, state="readonly", font=("Calibri", 11, "bold"), bg=bg_color, fg="brown")
+    time_entry1.grid(row=2, column=9, pady=5, padx=5)
+   
+    nanotime_label1 = Label(frame3, text="Nano Second(ns):", font=("Calibri", 11, "bold"), bg=bg_color)
+    nanotime_label1.grid(row=2, column=10)
+    nanotime_entry1 = Entry(frame3, width=15, state="readonly", font=("Calibri", 11, "bold"), bg=bg_color, fg="brown")
+    nanotime_entry1.grid(row=2, column=11, pady=5, padx=5)
+   
+    # Store widget references
+    if rt_name == "RT1":
+        rt1_widgets.update({
+            'update_entry': update_entry,
+            'counter_entry': counter_entry,
+            'sw_rst_c': sw_rst_c,
+            'hw_rst_c': hw_rst_c,
+            'tsm_counter_entry': tsm_counter_entry,
+            'week_entry': week_entry,
+            'time_entry': time_entry,
+            'nanotime_entry': nanotime_entry,
+            'week_entry1': week_entry1,
+            'time_entry1': time_entry1,
+            'nanotime_entry1': nanotime_entry1,
+        })
+    elif rt_name == "RT2":
+        rt2_widgets.update({
+            'update_entry': update_entry,
+            'counter_entry': counter_entry,
+            'sw_rst_c': sw_rst_c,
+            'hw_rst_c': hw_rst_c,
+            'tsm_counter_entry': tsm_counter_entry,
+            'week_entry': week_entry,
+            'time_entry': time_entry,
+            'nanotime_entry': nanotime_entry,
+            'week_entry1': week_entry1,
+            'time_entry1': time_entry1,
+            'nanotime_entry1': nanotime_entry1,
+        })
+    elif rt_name == "RT3":
+        rt3_widgets.update({
+            'update_entry': update_entry,
+            'counter_entry': counter_entry,
+            'sw_rst_c': sw_rst_c,
+            'hw_rst_c': hw_rst_c,
+            'tsm_counter_entry': tsm_counter_entry,
+            'week_entry': week_entry,
+            'time_entry': time_entry,
+            'nanotime_entry': nanotime_entry,
+            'week_entry1': week_entry1,
+            'time_entry1': time_entry1,
+            'nanotime_entry1': nanotime_entry1,
+        })
+
+
+# ==================== MAIN GUI ====================
+def connect_menu_init():
+    global window, frame1, connect_btn, refresh_btn, project_entry
+    global status_var, bus_var, dataword_entry, jump_entry, btn_pause_resume
+    global clicked_com, clicked_bd, drop_COM, drop_bd
+    
+    window = Tk()
+    window.title("GAGAN 18 CHANNEL INTERFACE - MULTI-RT")
+    window.configure(bg="burlywood")
+    window.geometry("1800x1200")
+    
+    project_name_var = StringVar(value="GAGANYAAN")
+
+    # Header Banner
+    header_label = Label(
+        window,
+        text="SPS TELEMETRY AND COMMAND INTERFACE : GAGANYAAN - MULTI-RT",
+        font=("Algerian", 20, "bold"),
+        bg="dark red",
+        fg="WHITE",
+        pady=10
+    )
+    header_label.grid(row=0, column=0, columnspan=6, sticky="ew")
+
+    # RT Selection Tabs
+    rt_tab_frame = Frame(window, bg="burlywood")
+    rt_tab_frame.grid(row=1, column=0, columnspan=6, sticky="ew", padx=10, pady=5)
+    
+    rt_tab_var = StringVar(value="RT1")
+    
+    def switch_rt_view(rt_name):
+        rt1_frame.grid_remove()
+        rt2_frame.grid_remove()
+        rt3_frame.grid_remove()
+        
+        if rt_name == "RT1":
+            rt1_frame.grid()
+        elif rt_name == "RT2":
+            rt2_frame.grid()
+        elif rt_name == "RT3":
+            rt3_frame.grid()
+    
+    rt1_tab = Radiobutton(rt_tab_frame, text="RT1 (ACC A1F0A/B)", variable=rt_tab_var, value="RT1", 
+                         font=("Calibri", 12, "bold"), bg="lightblue", command=lambda: switch_rt_view("RT1"))
+    rt1_tab.grid(row=0, column=0, padx=5)
+    
+    rt2_tab = Radiobutton(rt_tab_frame, text="RT2 (ACC A1F0C/D)", variable=rt_tab_var, value="RT2",
+                         font=("Calibri", 12, "bold"), bg="lightgreen", command=lambda: switch_rt_view("RT2"))
+    rt2_tab.grid(row=0, column=1, padx=5)
+    
+    rt3_tab = Radiobutton(rt_tab_frame, text="RT3 (ACC A1F0E/F)", variable=rt_tab_var, value="RT3",
+                         font=("Calibri", 12, "bold"), bg="lightcoral", command=lambda: switch_rt_view("RT3"))
+    rt3_tab.grid(row=0, column=2, padx=5)
+
+    # RT1 Frame (with COM Manager and Commands)
+    rt1_frame = Frame(window, bg="burlywood")
+    rt1_frame.grid(row=2, column=0, columnspan=6, sticky="nsew")
+    
+    # Scrollable Canvas for RT1
+    canvas_rt1 = Canvas(rt1_frame, bg="burlywood", highlightthickness=0)
+    scrollbar_y_rt1 = ttk.Scrollbar(rt1_frame, orient="vertical", command=canvas_rt1.yview)
+    scrollbar_x_rt1 = ttk.Scrollbar(rt1_frame, orient="horizontal", command=canvas_rt1.xview)
+    canvas_rt1.configure(yscrollcommand=scrollbar_y_rt1.set, xscrollcommand=scrollbar_x_rt1.set)
+
+    canvas_rt1.grid(row=0, column=0, sticky="nsew")
+    scrollbar_y_rt1.grid(row=0, column=1, sticky="ns")
+    scrollbar_x_rt1.grid(row=1, column=0, sticky="ew")
+
+    root_rt1 = Frame(canvas_rt1, bg="burlywood")
+    canvas_rt1.create_window((0, 0), window=root_rt1, anchor="nw")
+
+    rt1_frame.grid_rowconfigure(0, weight=1)
+    rt1_frame.grid_columnconfigure(0, weight=1)
+
+    def on_frame_configure_rt1(event):
+        canvas_rt1.configure(scrollregion=canvas_rt1.bbox("all"))
+    root_rt1.bind("<Configure>", on_frame_configure_rt1)
+    
+    # COM MANAGER for RT1 only
+    frame1 = LabelFrame(
+        root_rt1,
+        text="  COM MANAGER (RT1 ONLY)  ",
+        bg="burlywood",
+        fg="dark red",
+        font=("Calibri", 13, "bold"),
+        relief="solid",
+        bd=2,
+        padx=2, pady=2
+    )
+    frame1.grid(row=0, column=0, padx=2, pady=2, sticky="nsew")
+    
+    project_label = Label(frame1, text="Project Name: ", font=("Calibri", 11, "bold"), fg="dark green", bg="burlywood")
+    project_label.grid(column=0, row=0, pady=2, padx=2)
+    project_entry = Entry(frame1, textvariable=project_name_var, font=("Calibri", 11, "bold"), fg="dark green", bg="burlywood", width=15, justify="center")
+    project_entry.grid(row=0, column=1, pady=2, padx=2)
+    project_name_var.trace_add("write", lambda *args: update_project_name(project_name_var, header_label))
+    
+    port_label = Label(frame1, text="Available port[s]: ", font=("Calibri", 11, "bold"), fg="dark green", bg="burlywood")
+    port_label.grid(column=0, row=1, pady=2, padx=2)
+    
+    refresh_btn = Button(frame1, text="Refresh", width=15, font=("Calibri", 11, "bold"), fg="dark green", bg="burlywood", command=update_coms)
+    refresh_btn.grid(column=2, row=1, pady=2, padx=2)
+    
+    port_bd = Label(frame1, text="Baud Rate:", font=("Calibri", 11, "bold"), fg="dark green", bg="burlywood")
+    port_bd.grid(column=3, row=1, pady=2, padx=2)
+    
+    file_bd = Label(frame1, text="File:", font=("Calibri", 11, "bold"), fg="dark green", bg="burlywood")
+    file_bd.grid(column=5, row=1, pady=2, padx=2)
+    
+    file_entry1 = Entry(frame1, width=15, font=("Calibri", 11, "bold"), fg="dark green", bg="burlywood")
+    file_entry1.grid(column=6, row=1, pady=2, padx=2)
+    
+    connect_btn = Button(frame1, text="Connect", width=15, state="disabled", font=("Calibri", 11, "bold"), fg="dark green", bg="burlywood", command=connexion)
+    connect_btn.grid(column=7, row=1, pady=2, padx=2)
+    
+    btn_replay = tk.Button(frame1, text="Replay", width=15, font=("Calibri", 11, "bold"), fg="dark green", bg="burlywood", command=replay_from_file)
+    btn_replay.grid(column=2, row=0, padx=2, pady=2)
+   
+    tk.Label(frame1, text="Jump to SYS_SEC:", font=("Calibri", 11, "bold"), fg="dark green", bg="burlywood").grid(column=3, row=0, padx=2, pady=2)
+    
+    jump_entry = tk.Entry(frame1, width=15)
+    jump_entry.grid(column=4, row=0, padx=2, pady=2)
+    
+    btn_jump = tk.Button(frame1, text="Jump", width=10, font=("Calibri", 11, "bold"), fg="dark green", bg="burlywood", command=jump_to_sys_sec)
+    btn_jump.grid(column=5, row=0, padx=2, pady=2)
+    
+    btn_pause_resume = tk.Button(frame1, text="Pause ⏸", width=12, font=("Calibri", 11, "bold"), bg="light green", command=toggle_pause_resume)
+    btn_pause_resume.grid(column=6, row=0, padx=2, pady=2)
+    
+    btn_stop_replay = tk.Button(frame1, text="Stop Replay", width=15, font=("Calibri", 11, "bold"),
+                                bg="burlywood", fg="red", command=stop_replay)
+    btn_stop_replay.grid(column=7, row=0, padx=2, pady=2)
+    
+    status_var = StringVar(value="CMD Status:")
+    status_label = Label(
+        frame1,
+        textvariable=status_var,
+        anchor="w",
+        font=("Calibri", 11, "bold"),
+        fg="blue",
+        bg="burlywood",
+        wraplength=700,
+        justify="left"
+    )
+    status_label.grid(row=2, column=0, columnspan=8, sticky="w", padx=2, pady=2)
+    
+    # SA COMMANDS for RT1 only
+    frame13 = LabelFrame(root_rt1,
+        text="  SA COMMANDS (RT1 ONLY)  ",
+        bg="burlywood",
+        fg="dark red",
+        font=("Calibri", 13, "bold"),
+        relief="solid",
+        bd=2,
+        padx=2, pady=2
+    )
+    frame13.grid(row=0, column=3, padx=2, pady=2, sticky="nsew")
+    
+    # SA1 Manual Entry
+    Label(frame13, text="SA1(hex):", font=("Calibri", 11, "bold"), bg="burlywood", fg="blue").grid(row=1, column=0, padx=2, pady=2, sticky='e')
+    manual_entries['SA1'] = Entry(frame13, width=20, font=("Calibri", 11, "bold"))
+    manual_entries['SA1'].grid(row=1, column=1, padx=2, pady=2)
+    manual_entries['SA1'].insert(0, "0x0000 0x0004 0x0055")
+    btn_sa1_send = Button(frame13, text="Send SA1", width=8, command=lambda: send_general_command(manual_entries['SA1'].get(), "SA1"), font=("Calibri", 11, "bold"), bg="chocolate")
+    btn_sa1_send.grid(row=1, column=2, padx=2, pady=2)
+    
+    # SA2 Manual Entry
+    Label(frame13, text="SA2(hex):", font=("Calibri", 11, "bold"), bg="burlywood", fg="blue").grid(row=2, column=0, padx=2, pady=2, sticky='e')
+    manual_entries['SA2'] = Entry(frame13, width=20, font=("Calibri", 11, "bold"))
+    manual_entries['SA2'].grid(row=2, column=1, padx=2, pady=2)
+    manual_entries['SA2'].insert(0, "0x0000 0x0004 0x0055")
+    btn_sa2_send = Button(frame13, text="Send SA2", width=8, command=lambda: send_general_command(manual_entries['SA2'].get(), "SA2"), font=("Calibri", 11, "bold"), bg="chocolate")
+    btn_sa2_send.grid(row=2, column=2, padx=2, pady=2)
+    
+    # SA3 File Browse + Send + Stop
+    Label(frame13, text="SA3(hex):", font=("Calibri", 11, "bold"), bg="burlywood", fg="blue").grid(row=3, column=0, padx=2, pady=2, sticky='e')
+    file_entries['SA3'] = Entry(frame13, width=20, font=("Calibri", 11, "bold"))
+    file_entries['SA3'].grid(row=3, column=1, padx=2, pady=2)
+    
+    def browse_file_sa3():
+        filename = filedialog.askopenfilename(title="Select SA3 Command File", filetypes=[("All Files", "*.*")])
+        if filename:
+            file_entries['SA3'].delete(0, tk.END)
+            file_entries['SA3'].insert(0, filename)
+    
+    btn_browse_sa3 = Button(frame13, text="Browse", width=8, command=browse_file_sa3, font=("Calibri", 11, "bold"), bg="chocolate")
+    btn_browse_sa3.grid(row=3, column=2, padx=2, pady=2)
+    
+    btn_sa3_send = Button(frame13, text="Send SA3", width=8, command=lambda: send_general_command(None, "SA3"), font=("Calibri", 11, "bold"), bg="chocolate")
+    btn_sa3_send.grid(row=3, column=3, padx=2, pady=2)
+    
+    btn_sa3_stop = Button(frame13, text="Stop SA3", width=8, command=stop_sa3, font=("Calibri", 11, "bold"), bg="chocolate")
+    btn_sa3_stop.grid(row=3, column=4, padx=2, pady=2)
+    
+    # SA4 File Browse + Send + Stop
+    Label(frame13, text="SA4(hex):", font=("Calibri", 11, "bold"), bg="burlywood", fg="blue").grid(row=4, column=0, padx=2, pady=2, sticky='e')
+    file_entries['SA4'] = Entry(frame13, width=20, font=("Calibri", 11, "bold"))
+    file_entries['SA4'].grid(row=4, column=1, padx=2, pady=2)
+    
+    def browse_file_sa4():
+        filename = filedialog.askopenfilename(title="Select SA4 Command File", filetypes=[("All Files", "*.*")])
+        if filename:
+            file_entries['SA4'].delete(0, tk.END)
+            file_entries['SA4'].insert(0, filename)
+    
+    btn_browse_sa4 = Button(frame13, text="Browse", width=8, command=browse_file_sa4, font=("Calibri", 11, "bold"), bg="chocolate")
+    btn_browse_sa4.grid(row=4, column=2, padx=2, pady=2)
+    
+    btn_sa4_send = Button(frame13, text="Send SA4", width=8, command=lambda: send_general_command(None, "SA4"), font=("Calibri", 11, "bold"), bg="chocolate")
+    btn_sa4_send.grid(row=4, column=3, padx=2, pady=2)
+    
+    btn_sa4_stop = Button(frame13, text="Stop SA4", width=8, command=stop_sa4, font=("Calibri", 11, "bold"), bg="chocolate")
+    btn_sa4_stop.grid(row=4, column=4, padx=2, pady=2)
+    
+    cmd_btn = Button(frame13, text="List of Commands", font=("Calibri", 11, "bold"), bg="chocolate", command=open_popup)
+    cmd_btn.grid(row=1, column=3, padx=2, pady=2)
+    
+    # BUS COMMANDS for RT1 only
+    frame_bus = LabelFrame(root_rt1, text="  BUS COMMANDS (RT1 ONLY)  ",
+        bg="burlywood",
+        fg="dark red",
+        font=("Calibri", 13, "bold"),
+        relief="solid",
+        bd=2,
+        padx=2, pady=2
+    )
+    frame_bus.grid(row=1, column=3, padx=2, pady=2, sticky="nsew")
+    
+    bus_var = StringVar(value=" ")
+    Radiobutton(frame_bus, text="BUS A", variable=bus_var, value="A", font=("Calibri", 11, "bold"), bg="burlywood", fg="blue").grid(row=0, column=0, padx=2, pady=2)
+    Radiobutton(frame_bus, text="BUS B", variable=bus_var, value="B", font=("Calibri", 11, "bold"), bg="burlywood", fg="blue").grid(row=0, column=1, padx=2, pady=2)
+    
+    bus_var.trace_add('write', on_bus_toggle)
+    
+    Label(frame_bus, text="RT Add(Hex):", font=("Calibri", 11, "bold"), bg="burlywood", fg="dark violet").grid(row=1, column=0, padx=2, pady=2)
+    dataword_entry = Entry(frame_bus, width=6, font=("Calibri", 11, "bold"))
+    dataword_entry.grid(row=1, column=1, padx=2, pady=2)
+    dataword_entry.insert(1, "00")
+    
+    for i, (cmd_name, cmd_val) in enumerate(bus_commands):
+        btn = Button(frame_bus, text=cmd_name, width=11, font=("Calibri", 11, "bold"), bg="chocolate", command=lambda v=cmd_val: send_bus_command_button(v))
+        btn.grid(row=2+i//4, column=i%4, padx=2, pady=2)
+        bus_command_buttons[cmd_name] = btn
+ 
+    send_bus_manual = Button(frame_bus, text="Send", width=7, font=("Calibri", 11, "bold"), bg="chocolate", command=send_bus_command_entry)
+    send_bus_manual.grid(row=1, column=3, padx=2, pady=2)
+    
+    # Create RT1 display widgets
+    create_rt_display_widgets(root_rt1, "RT1")
+    
+    # RT2 Frame (without COM Manager and Commands)
+    rt2_frame = Frame(window, bg="lightgreen")
+    rt2_frame.grid(row=2, column=0, columnspan=6, sticky="nsew")
+    
+    # Scrollable Canvas for RT2
+    canvas_rt2 = Canvas(rt2_frame, bg="lightgreen", highlightthickness=0)
+    scrollbar_y_rt2 = ttk.Scrollbar(rt2_frame, orient="vertical", command=canvas_rt2.yview)
+    scrollbar_x_rt2 = ttk.Scrollbar(rt2_frame, orient="horizontal", command=canvas_rt2.xview)
+    canvas_rt2.configure(yscrollcommand=scrollbar_y_rt2.set, xscrollcommand=scrollbar_x_rt2.set)
+
+    canvas_rt2.grid(row=0, column=0, sticky="nsew")
+    scrollbar_y_rt2.grid(row=0, column=1, sticky="ns")
+    scrollbar_x_rt2.grid(row=1, column=0, sticky="ew")
+
+    root_rt2 = Frame(canvas_rt2, bg="lightgreen")
+    canvas_rt2.create_window((0, 0), window=root_rt2, anchor="nw")
+
+    rt2_frame.grid_rowconfigure(0, weight=1)
+    rt2_frame.grid_columnconfigure(0, weight=1)
+
+    def on_frame_configure_rt2(event):
+        canvas_rt2.configure(scrollregion=canvas_rt2.bbox("all"))
+    root_rt2.bind("<Configure>", on_frame_configure_rt2)
+    
+    # RT2 Header
+    rt2_header = Label(root_rt2, text="RT2 DISPLAY (ACC A1F0C/D)", font=("Algerian", 16, "bold"),
+                      bg="darkgreen", fg="white", pady=10)
+    rt2_header.grid(row=0, column=0, columnspan=5, sticky="ew", pady=5)
+    
+    # Create RT2 display widgets
+    create_rt_display_widgets(root_rt2, "RT2")
+    
+    # RT3 Frame (without COM Manager and Commands)
+    rt3_frame = Frame(window, bg="lightcoral")
+    rt3_frame.grid(row=2, column=0, columnspan=6, sticky="nsew")
+    
+    # Scrollable Canvas for RT3
+    canvas_rt3 = Canvas(rt3_frame, bg="lightcoral", highlightthickness=0)
+    scrollbar_y_rt3 = ttk.Scrollbar(rt3_frame, orient="vertical", command=canvas_rt3.yview)
+    scrollbar_x_rt3 = ttk.Scrollbar(rt3_frame, orient="horizontal", command=canvas_rt3.xview)
+    canvas_rt3.configure(yscrollcommand=scrollbar_y_rt3.set, xscrollcommand=scrollbar_x_rt3.set)
+
+    canvas_rt3.grid(row=0, column=0, sticky="nsew")
+    scrollbar_y_rt3.grid(row=0, column=1, sticky="ns")
+    scrollbar_x_rt3.grid(row=1, column=0, sticky="ew")
+
+    root_rt3 = Frame(canvas_rt3, bg="lightcoral")
+    canvas_rt3.create_window((0, 0), window=root_rt3, anchor="nw")
+
+    rt3_frame.grid_rowconfigure(0, weight=1)
+    rt3_frame.grid_columnconfigure(0, weight=1)
+
+    def on_frame_configure_rt3(event):
+        canvas_rt3.configure(scrollregion=canvas_rt3.bbox("all"))
+    root_rt3.bind("<Configure>", on_frame_configure_rt3)
+    
+    # RT3 Header
+    rt3_header = Label(root_rt3, text="RT3 DISPLAY (ACC A1F0E/F)", font=("Algerian", 16, "bold"),
+                      bg="darkred", fg="white", pady=10)
+    rt3_header.grid(row=0, column=0, columnspan=5, sticky="ew", pady=5)
+    
+    # Create RT3 display widgets
+    create_rt_display_widgets(root_rt3, "RT3")
+    
+    # Initially show RT1
+    switch_rt_view("RT1")
+    
+    # Footer Section
+    separator = Frame(window, bg="black", height=2)
+    separator.grid(row=3, column=0, columnspan=6, sticky="ew", pady=(10, 0))
+
+    footer_label = Label(
+        window,
+        text="copyright@2025, Space Navigation Group/URSC/ISRO | Version 1.0 | Multi-RT Display",
+        font=("Segoe UI", 10, "italic"),
+        bg="navy blue",
+        fg="white",
+        pady=2
+    )
+    footer_label.grid(row=4, column=0, columnspan=6, sticky="nsew")
+    
+    # Configure window grid
+    window.grid_rowconfigure(2, weight=1)
+    window.grid_columnconfigure(0, weight=1)
+    
+    baud_select()
+    update_coms()
+    
+    window.mainloop()
+
+
+# Start the application
+if __name__ == "__main__":
+    connect_menu_init()
