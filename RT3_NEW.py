@@ -646,3 +646,296 @@ def process_rt_data(hexDecodedData, rt_name):
         print(f"❌ Error processing {rt_name} data: {e}")
         import traceback
         traceback.print_exc()
+
+
+
+
+
+
+
+
+
+=====================
+
+
+Perfect! Now I understand your existing saving structure. Here's how to adapt it for your multi-RT system:
+
+## Updated `write_to_pvt` function for multi-RT:
+
+```python
+def write_to_pvt(data, rt_name, base_name):
+    """Save PVT data for specific RT"""
+    file_name = f"GAGANYAN_{SESSION_TIMESTAMP}_{base_name}_{rt_name}_PVT.csv"
+    header = ['TimeStamp','Counter','Sys_Second','Sys_NanoSecond','Sys_WeekNumber','PPS_Second','PPS_NanoSecond','PPS_WeekNo','PPS_3D FIX','PPS_LEAP SEC',
+              'TSM_Counter','Update Counter',
+              'Checksum','Checksum 2','PDOP','Clock bais','InterSystem bais','Drift','Inter System Drift',
+              'POS_X','POS_Y','POS_Z','POS_VX','POS_VY','POS_VZ',
+              'ESt_X','EST_Y','EST_Z','EST_VX','EST_VY','EST_VZ',
+              'ACQ1','ACQ2','ACQ3','ACQ4',
+              'TM SEL','SWD','HWDT','SBASEN','SYS_MODE','REC MODE','TIME MODE','ALM AV','TIME AV','POS MODE','POS AV',
+              'SW RESET COUNTER','HW RESET COUNTER','SW RESET ID','SPS ID','SOL MODE','PORT CONFIG1','PORT CONFIG2','PORT CONFIG3','PORT CONFIG4',
+              'NAVIC MSG 22 COUNTER','NAVIC MSG CMD COUNTER','LEO SAT ID','NO OF SAT TRACKED','NAVIC CMD VAR',
+              'ODP EST FLAG','ODP EN','PHC USG','PHC EN','EPH RT','MN VON','NUM SPS',
+              'LAST CMD EXE','LAST RESET TIME','CMD BASED RT','TOTAL CMD COUNTER',
+              'RT ID','MISSION PHASE','FMEM','CR AID','FULL CTRL','S ID','LIG-1','LIG-2','LIG-3','LIG-4','LIN-1','LIN2','PRIME NGC',
+              'Rng L','Orbit Phase','Iono C','Iono Sm','Cr Smo','Vel sm','RAIM','PR Rej','Pr Bf Sync','Cfg loop','int crd tst','Elev En','Rst Flag','ODP Rst Sp','Cold Vis','Navic Msg En',
+              'DUAL CMD COUNTER','SPS CMD COUNTER','NRFFC RESET COUNTER1','NRFFC RESET COUNTER2',
+              'GRFFC RESET COUNTER1','GRFFC RESET COUNTER2','GRFFC RESET COUNTER3','GRFFC RESET COUNTER4']
+    
+    bit_names = ["A","T","D","E","P","H","R","P1","I","S","SR","E1"]
+    for ch in range(1, 19):
+        header.append(f'CH{ch}')
+        header.append(f'SVID{ch}')
+        header.append(f'CNDR{ch}')
+        for bit in bit_names:
+            header.append(f'{bit}{ch}')
+        header.append(f'IODE{ch}')
+        header.append(f'PR(cm){ch}')
+        header.append(f'DR(m/s){ch}')
+        header.append(f'ELEV{ch}')
+    
+    with open(file_name, mode='a', newline='') as file:
+        write = csv.writer(file)
+        if file.tell() == 0:
+            write.writerow(header)
+        write.writerow(data)
+    print(f"✅ Saved {rt_name} data to {file_name}")
+```
+
+## Update other save functions for multi-RT:
+
+```python
+def write_to_raw(data, rt_name, base_name):
+    """Save raw data for specific RT"""
+    file_name = f"GAGANYAN_{SESSION_TIMESTAMP}_{base_name}_{rt_name}_Raw.csv"
+    header = ['TimeStamp','RAW DATA']
+    
+    with open(file_name, mode='a', newline='') as file:
+        write = csv.writer(file)
+        if file.tell() == 0:
+            write.writerow(header)
+        write.writerow(data)
+
+def write_to_SYN(data, rt_name, base_name):
+    """Save sync data for specific RT"""
+    file_name = f"GAGANYAN_{SESSION_TIMESTAMP}_{base_name}_{rt_name}_Sync.csv"
+    header = ['TimeStamp','SYN_SECOND','SYN_NANOSECOND','SYN_WEEKNUMBER']
+    
+    with open(file_name, mode='a', newline='') as file:
+        write = csv.writer(file)
+        if file.tell() == 0:
+            write.writerow(header)
+        write.writerow(data)
+```
+
+## Update your `process_rt_data` function to save data:
+
+```python
+def process_rt_data(hexDecodedData, rt_name):
+    """Process data for a specific RT and update its widgets"""
+    # Get widget references for this RT
+    if rt_name == "RT1":
+        widgets = rt1_widgets
+        counter_var = counter_value
+    elif rt_name == "RT2":
+        widgets = rt2_widgets
+        counter_var = counter_value2
+    elif rt_name == "RT3":
+        widgets = rt3_widgets
+        counter_var = counter_value3
+    else:
+        return
+    
+    try:
+        # =============== EXTRACT HEX VALUES FROM DATA ===============
+        # ... (your existing parsing code remains the same) ...
+        
+        # =============== CONVERT HEX TO DECIMAL VALUES ===============
+        # ... (your existing conversion code remains the same) ...
+        
+        # =============== UPDATE WIDGETS ===============
+        # ... (your existing widget update code remains the same) ...
+        
+        # =============== SAVE DATA TO FILES ===============
+        
+        # Get current timestamp and base name
+        current_timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        base_name = project_entry.get()  # Get from project entry
+        
+        # Save SYNC data
+        sync_data = [current_timestamp, SYN_Second, SYN_NanoSecond, SYN_WeekNumber]
+        write_to_SYN(sync_data, rt_name, base_name)
+        
+        # Save RAW data
+        raw_data = [current_timestamp, hexDecodedData]
+        write_to_raw(raw_data, rt_name, base_name)
+        
+        # Extract flags
+        word31 = reverse_and_concatenate(word31_hex)
+        word32 = reverse_and_concatenate(word32_hex)
+        word20 = reverse_and_concatenate(word20_hex)
+        word28 = reverse_and_concatenate(word28_sw_rst_id_hex)
+        
+        flags = extract_word31_flags(word31)
+        flag2 = extract_sa4w32_flags(word32)
+        flag = extract_word20_flags(word20)  # You need to create this function
+        flag1 = extract_word28LSB_flags(word28)  # You need to create this function
+        flag3 = extract_sps3word31LSB_flags(word31 & 0xFF)  # You need to create this function
+        
+        # Create PVT data row
+        data_row = [
+            current_timestamp,  # TimeStamp
+            str(counter_var),   # Counter
+            str(SYS_Second),    # Sys_Second
+            str(SYS_NanoSecond),# Sys_NanoSecond
+            str(SYS_WeekNumber),# Sys_WeekNumber
+            str(PPS_Sec),       # PPS_Second
+            str(PPS_Nanosec),   # PPS_NanoSecond
+            str(PPS_Week),      # PPS_WeekNo
+            str(fix_3D),        # PPS_3D FIX
+            str(Leap),          # PPS_LEAP SEC
+            str(TSM_update_counter),  # TSM_Counter
+            str(UpdateCounter),       # Update Counter
+            str(checksum_result),     # Checksum
+            "N/A",              # Checksum 2 (placeholder)
+            f"{PDOP:.2f}",      # PDOP
+            str(Bais),          # Clock bais
+            str(ISB),           # InterSystem bais
+            f"{DRIFT:.2f}",     # Drift
+            str(ISD),           # Inter System Drift
+            f"{POS_x:.2f}",     # POS_X
+            f"{POS_y:.2f}",     # POS_Y
+            f"{POS_z:.2f}",     # POS_Z
+            f"{POS_vx:.3f}",    # POS_VX
+            f"{POS_vy:.3f}",    # POS_VY
+            f"{POS_vz:.3f}",    # POS_VZ
+            f"{INS_x:.2f}",     # ESt_X
+            f"{INS_y:.2f}",     # EST_Y
+            f"{INS_z:.2f}",     # EST_Z
+            f"{INS_vx:.3f}",    # EST_VX
+            f"{INS_vy:.3f}",    # EST_VY
+            f"{INS_vz:.3f}",    # EST_VZ
+            str(ACQ1),          # ACQ1
+            str(ACQ2),          # ACQ2
+            str(ACQ3),          # ACQ3
+            str(ACQ4),          # ACQ4
+            flag.get('Tm_sel', ''),     # TM SEL
+            flag.get("SWDT", ''),       # SWD
+            flag.get("HWDT", ''),       # HWDT
+            flag.get("SBASEN", ''),     # SBASEN
+            flag.get("System_mode", ''),# SYS_MODE
+            flag.get("Rec_Mode", ''),   # REC MODE
+            flag.get("Time_Mode", ''),  # TIME MODE
+            flag.get("Alm_Av", ''),     # ALM AV
+            flag.get("Time_Av", ''),    # TIME AV
+            flag.get("Pose_Mode", ''),  # POS MODE
+            flag.get("Pos_Av", ''),     # POS AV
+            str(SW_reset_counter),      # SW RESET COUNTER
+            str(HW_reset_counter),      # HW RESET COUNTER
+            str(SW_RST_ID),             # SW RESET ID
+            flag1.get("SPS_ID", ''),    # SPS ID
+            flag1.get("Sol_mode", ''),  # SOL MODE
+            flag1.get("Port_config", {}).get("Antenna_1", ''),  # PORT CONFIG1
+            flag1.get("Port_config", {}).get("Antenna_2", ''),  # PORT CONFIG2
+            flag1.get("Port_config", {}).get("Antenna_3", ''),  # PORT CONFIG3
+            flag1.get("Port_config", {}).get("Antenna_4", ''),  # PORT CONFIG4
+            str(Navic_msg_22_counter),  # NAVIC MSG 22 COUNTER
+            str(Navic_msg_counter),     # NAVIC MSG CMD COUNTER
+            str(Leo_sat_id_mil),        # LEO SAT ID
+            str(No_of_Sat),             # NO OF SAT TRACKED
+            str(Navic_cmd_var),         # NAVIC CMD VAR
+            flag3.get("ODP_Est flag", ''),  # ODP EST FLAG
+            flag3.get("ODP_ENA", ''),       # ODP EN
+            flag3.get("PHCUsage", ''),      # PHC USG
+            flag3.get("PHCEn", ''),         # PHC EN
+            flag3.get("Eph RT", ''),        # EPH RT
+            flag3.get("MNVON", ''),         # MN VON
+            flag3.get("NUMSPS", ''),        # NUM SPS
+            str(Last_cmd_ex),           # LAST CMD EXE
+            str(Last_reset_time),       # LAST RESET TIME
+            str(Cmd_counter_based_rt),  # CMD BASED RT
+            str(Total_cmd_counter),     # TOTAL CMD COUNTER
+            flags.get("RT_ID", ''),     # RT ID
+            flags.get("Mission_Phase", ''), # MISSION PHASE
+            flags.get("Fmem", ''),      # FMEM
+            flags.get("Cr_Aid", ''),    # CR AID
+            flags.get("FLL_Cntr", ''),  # FULL CTRL
+            flags.get("S_ID", ''),      # S ID
+            flags.get("LIG_1", ''),     # LIG-1
+            flags.get("LIG_2", ''),     # LIG-2
+            flags.get("LIG_3", ''),     # LIG-3
+            flags.get("LIG_4", ''),     # LIG-4
+            flags.get("LIN_1", ''),     # LIN-1
+            flags.get("LIN_2", ''),     # LIN2
+            flags.get("Prime_NGC", ''), # PRIME NGC
+            flag2.get("Rng L", ''),     # Rng L
+            flag2.get("Orbit Phase", ''), # Orbit Phase
+            flag2.get("Iono C", ''),    # Iono C
+            flag2.get("Iono Sm", ''),   # Iono Sm
+            flag2.get("Cr Smo", ''),    # Cr Smo
+            flag2.get("Vel sm", ''),    # Vel sm
+            flag2.get("RAIM", ''),      # RAIM
+            flag2.get("PR Rej", ''),    # PR Rej
+            flag2.get("Pr Bf Sync", ''),# Pr Bf Sync
+            flag2.get("Cfg loop", ''),  # Cfg loop
+            flag2.get("int crd tst", ''),# int crd tst
+            flag2.get("Elev En", ''),   # Elev En
+            flag2.get("Rst Flag", ''),  # Rst Flag
+            flag2.get("ODP Rst Sp", ''),# ODP Rst Sp
+            flag2.get("Cold Vis", ''),  # Cold Vis
+            flag2.get("Navic Msg En", ''),# Navic Msg En
+            str(Dual_exe_cmd_c),        # DUAL CMD COUNTER
+            str(Spu_cmd_c),             # SPS CMD COUNTER
+            str(Nrffc_counter1),        # NRFFC RESET COUNTER1
+            str(Nrffc_counter2),        # NRFFC RESET COUNTER2
+            str(Grffc_counter1),        # GRFFC RESET COUNTER1
+            str(Grffc_counter2),        # GRFFC RESET COUNTER2
+            str(Grffc_counter3),        # GRFFC RESET COUNTER3
+            str(Grffc_counter4)         # GRFFC RESET COUNTER4
+        ]
+        
+        # Append 18-channel grouped data to the row
+        bit_names = ["A", "T", "D", "E", "P", "H", "R", "P1", "I", "S", "SR", "E1"]
+        
+        for ch in range(18):
+            data_row.append(ch+1)  # CH
+            data_row.append(str(SVID_values[ch]))  # SVID
+            data_row.append(str(CNDR_values[ch]))  # CNDR
+            
+            # Get status meaning for this channel
+            if ch < len(CHANNEL_STATUS):
+                status_meaning = decode_channel_status_meaning(CHANNEL_STATUS[ch])
+            else:
+                status_meaning = {}
+            
+            # Add bit flags
+            for bit in bit_names:
+                data_row.append(status_meaning.get(bit, ""))
+            
+            data_row.append(str(IODE_values[ch]))  # IODE
+            data_row.append(str(PR_values[ch]))    # PR
+            data_row.append(f"{DR_values[ch]:.3f}")  # DR
+            data_row.append(str(Elev_values[ch]))  # ELEV
+        
+        # Save PVT data
+        write_to_pvt(data_row, rt_name, base_name)
+        
+        print(f"✅ Successfully processed and saved {rt_name} data")
+        
+    except Exception as e:
+        print(f"❌ Error processing {rt_name} data: {e}")
+        import traceback
+        traceback.print_exc()
+```
+
+## Key changes:
+
+1. **RT-specific file naming**: Files now include RT name: `GAGANYAN_2025-08-21_20-35-10_GAGANYAAN_RT1_PVT.csv`
+
+2. **All RTs use same functions**: RT1, RT2, RT3 all use the same `write_to_pvt`, `write_to_raw`, `write_to_SYN` functions
+
+3. **Project name from entry**: Uses `project_entry.get()` instead of `file_entry1.get()`
+
+4. **Consistent with your original**: Maintains the same data structure and order you had for RT1
+
+Now each RT will save its data to separate files, making it easy to analyze data from each receiver independently.
