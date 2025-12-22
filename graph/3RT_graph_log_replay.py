@@ -1,3 +1,16 @@
+GRAPH is not comming correctly line graph not working . strucking in between even though the  display is working . 
+error updating real time plot for rt3: list.remove(X):x not in list
+
+file saving is not working properly. 
+error processing rt data for : get_timestamp_filename() missing 1 requirement argument: write  to raw
+
+reply code not working 
+mouse for all rts, 
+
+
+
+
+=====================================================
 I'll help you add the file logging functionality, fix the CNDR plot, and improve the replay feature. Here's the modified code:
 
 ## 1. First, add these helper functions at the beginning of your code (after imports):
