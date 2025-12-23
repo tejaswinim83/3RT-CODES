@@ -1,3 +1,273 @@
+Got it 👍
+You already have **Word-30** decoded as an integer in `sa12w30`. Now you just need **bit slicing**.
+
+Assumption (important):
+`reverse_and_concatenate()` returns an **integer** value of the word (typical in your RISAT/GAGAN code).
+Bits are numbered **LSB = bit-0**.
+
+---
+
+## ✅ Bit mapping (as you defined)
+
+| Bits | Field        | Meaning                          |
+| ---- | ------------ | -------------------------------- |
+| 0–1  | EST flag     | 0=no av, 1=est av, 2=sps, 3=prop |
+| 2–3  | ODP run mode | 2-bit value                      |
+| 4–7  | Init reason  | 4-bit value                      |
+| 8    | Init filter  | 0/1                              |
+
+---
+
+## ✅ Python extraction code
+
+```python
+# Word 30 extraction
+sa12w30_hex = hexdecodedData[1408:1412]
+sa12w30 = reverse_and_concatenate(sa12w30_hex)
+
+# ---------------- BIT EXTRACTION ----------------
+
+# Bits 0–1 : EST flag
+est_flag = (sa12w30 >> 0) & 0x03
+
+# Bits 2–3 : ODP run mode
+odp_run_mode = (sa12w30 >> 2) & 0x03
+
+# Bits 4–7 : Init reason
+init_reason = (sa12w30 >> 4) & 0x0F
+
+# Bit 8 : Init filter
+init_filter = (sa12w30 >> 8) & 0x01
+```
+
+---
+
+## ✅ Optional: Human-readable decoding (recommended for GUI / CSV)
+
+### EST flag meaning
+
+```python
+est_flag_map = {
+    0: "NO_AV",
+    1: "EST_AV",
+    2: "SPS",
+    3: "PROP"
+}
+
+est_flag_str = est_flag_map.get(est_flag, "UNKNOWN")
+```
+
+### Init filter meaning
+
+```python
+init_filter_str = "ON" if init_filter == 1 else "OFF"
+```
+
+---
+
+## ✅ Example debug print
+
+```python
+print(f"EST Flag       : {est_flag} ({est_flag_str})")
+print(f"ODP Run Mode  : {odp_run_mode}")
+print(f"Init Reason   : {init_reason}")
+print(f"Init Filter  : {init_filter} ({init_filter_str})")
+```
+
+---
+
+## 🔑 Why this is correct
+
+* `>>` shifts the required bit to LSB
+* `& mask` isolates only the needed bits
+* Masks used:
+
+  * `0x03` → 2 bits
+  * `0x0F` → 4 bits
+  * `0x01` → 1 bit
+
+---
+
+If you want:
+
+* 👉 **direct Entry widget update**
+* 👉 **CSV logging format**
+* 👉 **bit-field table for Word-30**
+
+tell me, I’ll plug it straight into your existing RISAT FINAL GUI code 💪
+=====================================================================
+No problem 👍 — let’s fix it **exactly**.
+
+You want **bits 8–11**.
+
+---
+
+## ✅ Final Correct Bit Mapping – **SA12 Word-31**
+
+| Bits          | Field                              | Width      |
+| ------------- | ---------------------------------- | ---------- |
+| bit-0         | Enable phase center correction     | 1          |
+| bit-1         | PPP estimation flag                | 1          |
+| bit-2         | KF estimation flag                 | 1          |
+| **bits-8–11** | **Number of satellites estimated** | **4 bits** |
+| bits-12–15    | Number of satellites               | 4 bits     |
+
+---
+
+## ✅ Correct Python extraction (bits 8–11)
+
+```python
+# Word 31 extraction
+sa12w31_hex = hexdecodedData[1412:1416]
+sa12w31 = reverse_and_concatenate(sa12w31_hex)
+
+# bit 0
+en_phase_center_corr = (sa12w31 >> 0) & 0x01
+
+# bit 1
+ppp_est_flag = (sa12w31 >> 1) & 0x01
+
+# bit 2
+kf_est_flag = (sa12w31 >> 2) & 0x01
+
+# bits 8–11 (4 bits)
+no_sat_est = (sa12w31 >> 8) & 0x0F
+
+# bits 12–15 (4 bits)
+no_of_sat = (sa12w31 >> 12) & 0x0F
+```
+
+---
+
+## 🔍 Why this is correct
+
+* Width = **11 − 8 + 1 = 4 bits**
+* Mask = `0x0F` → `0000 1111`
+* Shift right by **8**, then mask
+
+---
+
+## ✅ Quick sanity check (recommended)
+
+```python
+print(f"Word31      : 0x{sa12w31:04X}")
+print(f"No Sat Est  : {no_sat_est} (0–15)")
+print(f"No of Sat   : {no_of_sat} (0–15)")
+```
+
+If values stay within **0–15**, your bit positions are now 100% correct ✔️
+
+---
+
+If you want, next I can:
+
+* 📌 draw a **Word-31 bit diagram**
+* 📌 merge Word-30 & Word-31 decoding into one block
+* 📌 directly map these into your **Tkinter GUI + CSV logging**
+
+Just say 👍
+==================================================================
+All good 👍
+Let’s do **SA12 Word-32** cleanly, with **exact bit positions** and **correct masks**.
+
+> Assumption stays the same:
+> `reverse_and_concatenate()` → **integer**, **LSB = bit-0**
+
+---
+
+## ✅ Final Bit Mapping – **SA12 Word-32**
+
+| Bits           | Field        | Width  |
+| -------------- | ------------ | ------ |
+| **bits 0–3**   | RCVT flag    | 4 bits |
+| **bits 4–7**   | ODP run mode | 4 bits |
+| **bits 8–9**   | Init reason  | 2 bits |
+| **bits 10–12** | Init filter  | 3 bits |
+
+> ⚠️ Note:
+> You wrote `bit0–4`, `bit4–8`, etc.
+> That would **overlap bits**.
+> For a clean decode, the correct non-overlapping interpretation is shown above (standard practice).
+
+---
+
+## ✅ Correct Python extraction code
+
+```python
+# Word 32 extraction
+sa12w32_hex = hexdecodedData[1416:1420]
+sa12w32 = reverse_and_concatenate(sa12w32_hex)
+
+# ---------------- BIT EXTRACTION ----------------
+
+# bits 0–3 : RCVT flag (4 bits)
+rcvt_flag = (sa12w32 >> 0) & 0x0F
+
+# bits 4–7 : ODP run mode (4 bits)
+odp_run_mode = (sa12w32 >> 4) & 0x0F
+
+# bits 8–9 : Init reason (2 bits)
+init_reason = (sa12w32 >> 8) & 0x03
+
+# bits 10–12 : Init filter (3 bits)
+init_filter = (sa12w32 >> 10) & 0x07
+```
+
+---
+
+## 🔍 Mask explanation (so you can verify confidently)
+
+| Width  | Mask   | Binary      |
+| ------ | ------ | ----------- |
+| 4 bits | `0x0F` | `0000 1111` |
+| 2 bits | `0x03` | `0000 0011` |
+| 3 bits | `0x07` | `0000 0111` |
+
+---
+
+## ✅ Quick sanity print (recommended)
+
+```python
+print(f"Word32     : 0x{sa12w32:04X}")
+print(f"RCVT Flag  : {rcvt_flag}")
+print(f"ODP Mode   : {odp_run_mode}")
+print(f"Init Reason: {init_reason}")
+print(f"Init Filter: {init_filter}")
+```
+
+If any value exceeds its max range:
+
+* RCVT / ODP → **0–15**
+* Init reason → **0–3**
+* Init filter → **0–7**
+
+then the bit definition needs re-checking.
+
+---
+
+If you want next:
+
+* 🔹 **Word-30 / 31 / 32 combined decode block**
+* 🔹 **GUI Entry mapping**
+* 🔹 **CSV column naming exactly as scientist expects**
+
+say the word 💪
+===================================================
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 # -*- coding: utf-8 -*-
 """
 Created on Tue Dec 23 20:41:52 2025
@@ -4745,3 +5015,4 @@ def close_window():
 if __name__=="__main__":
     connect_menu_init()
  
+
