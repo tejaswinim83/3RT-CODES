@@ -529,3 +529,54 @@ def main():
 12. **Legend**: Line plot has legend with all 18 channels
 
 The line plot will show all 18 channels with different colors, and you can see the trend of each channel over time. Both plots will update smoothly without freezing!
+
+
+
+=============================================
+
+Got it 👍 — you want a **minimal Python script** that reads data from a `.txt` file and plots it on an X–Y graph, using as few libraries as possible. The simplest way is to use **only `matplotlib`** (no pandas, numpy, etc.).  
+
+Here’s a clean example:
+
+```python
+import matplotlib.pyplot as plt
+
+# Read data from a text file
+# Assume the file has two columns: x y (separated by spaces)
+x = []
+y = []
+
+with open("data.txt", "r") as f:
+    for line in f:
+        values = line.strip().split()
+        if len(values) == 2:  # ensure two numbers per line
+            x.append(float(values[0]))
+            y.append(float(values[1]))
+
+# Plot the data
+plt.plot(x, y, marker='o')
+plt.xlabel("X-axis")
+plt.ylabel("Y-axis")
+plt.title("Simple Graph from TXT File")
+plt.grid(True)
+plt.show()
+```
+
+### 📂 Example `data.txt`
+```
+1 2
+2 4
+3 6
+4 8
+5 10
+```
+
+### 🔎 How it works
+- Opens `data.txt` line by line.  
+- Splits each line into two numbers (X and Y).  
+- Converts them to floats and stores in lists.  
+- Plots with `matplotlib` using `plt.plot()`.  
+
+This is about as simple as it gets — just **one library** (`matplotlib`) and plain Python file reading.  
+
+👉 Do you want me to also show you how to handle cases where the file has commas (CSV-style) instead of spaces?
