@@ -1,3 +1,110 @@
+Got it 👍
+**Only POS_X, POS_Y, POS_Z extraction check** — no graph, no extras.
+
+---
+
+## ✅ Correct way to extract **POS_X, POS_Y, POS_Z**
+
+(Position values are **SIGNED** and **multi-byte**)
+
+### 1️⃣ What POS values usually are
+
+From your RT3 navigation packets (as used in your code):
+
+* **POS_X, POS_Y, POS_Z**
+* **32-bit signed integers (2’s complement)**
+* Stored as **4 bytes (1 word × 2 or 2 words × 2 bytes depending on format)**
+* **MSB first** after reverse/concatenate
+
+---
+
+## 2️⃣ What is WRONG in your code (root cause)
+
+In your file, POS values are extracted like this pattern (example):
+
+```python
+pos_x_hex = hexDecodedData[start:end]
+pos_x = int(pos_x_hex, 16)
+```
+
+❌ **Problem**
+This treats POS_X as **UNSIGNED**, so:
+
+* Negative positions become huge positive numbers
+* Values look unstable / incorrect
+
+---
+
+## 3️⃣ ✅ Correct extraction method (SIGNED 32-bit)
+
+### ✅ Use this helper (mandatory)
+
+```python
+def get_signed_32bit(hex_str):
+    value = int(hex_str, 16)
+    if value & 0x80000000:
+        value -= 0x100000000
+    return value
+```
+
+---
+
+## 4️⃣ ✅ Correct POS extraction (FIX)
+
+### Example (adjust indices to your packet)
+
+```python
+# POS X
+pos_x_hex = reverse_and_concatenate(hexDecodedData[POS_X_START:POS_X_END])
+pos_x = get_signed_32bit(pos_x_hex)
+
+# POS Y
+pos_y_hex = reverse_and_concatenate(hexDecodedData[POS_Y_START:POS_Y_END])
+pos_y = get_signed_32bit(pos_y_hex)
+
+# POS Z
+pos_z_hex = reverse_and_concatenate(hexDecodedData[POS_Z_START:POS_Z_END])
+pos_z = get_signed_32bit(pos_z_hex)
+```
+
+---
+
+## 5️⃣ How to VERIFY quickly (very important)
+
+Add this temporary print once:
+
+```python
+print("POS HEX:", pos_x_hex, pos_y_hex, pos_z_hex)
+print("POS DEC:", pos_x, pos_y, pos_z)
+```
+
+✅ If working correctly:
+
+* POS values can be **positive or negative**
+* No sudden jumps like `429496xxxx`
+* Smooth change between packets
+
+---
+
+## 6️⃣ Summary (short & clear)
+
+✔ Extraction indices → **OK in your code**
+❌ Interpretation → **WRONG (unsigned)**
+✅ Fix → **signed 32-bit conversion**
+
+---
+
+If you want, next I can:
+
+* Verify **exact byte indices** for POS_X/Y/Z word numbers
+* Check **VEL_X, VEL_Y, VEL_Z** (same issue exists there)
+* Match extraction exactly with your **RT3 ICD word numbers**
+
+Just tell 👍
+
+
+
+=============================================================================
 Here's the **exact** code to add and where to add it:
 
 ## Step 1: Replace the existing `bind_mousewheel` function (around line 210 in your original code)
